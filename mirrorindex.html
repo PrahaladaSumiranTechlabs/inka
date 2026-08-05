@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Screen Mirror Client</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <!-- Browsers with no JavaScript at all (very old e-readers) go straight to the simple page -->
+    <noscript><meta http-equiv="refresh" content="0; url=/simple"></noscript>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #333;
+            color: #fff;
+            font-family: Arial, sans-serif;
+            text-align: center;
+            overscroll-behavior: none; /* Prevent pull to refresh on mobile */
+            touch-action: manipulation; /* Optimize for touch */
+        }
+        #status {
+            background-color: #222;
+            padding: 10px;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            font-size: 18px;
+            z-index: 100;
+        }
+        #screen {
+            margin-top: 50px;
+            width: 100%;
+            height: calc(100vh - 120px);
+            object-fit: contain;
+            background-color: #000;
+            pointer-events: none; /* Prevent image drag on touch devices */
+            transition: transform 0.3s ease; /* Smooth transition for rotation */
+            transform-origin: center center; /* Ensure rotation happens from center */
+        }
+        
+        /* Rotation-specific styling */
+        .rotated-90, .rotated-270 {
+            /* For 90/270 degree rotations, we need to adjust dimensions */
+            max-width: calc(100vh - 120px);
+            max-height: 100vw;
+        }
+        #controls {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background-color: #222;
+            padding: 10px;
+            display: flex;
+            justify-content: space-around;
+            z-index: 100;
+        }
+        button {
+            padding: 12px 24px;
+            font-size: 16px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            touch-action: manipulation;
+
+        }
+        button:active {
+            background-color: #3e8e41;
+            transform: translateY(2px);
+        }
+        button.disconnect {
+            background-color: #f44336;
+        }
+        .fullscreen-button {
+            position: absolute;
+            top: 60px;
+            right: 10px;
+            background-color: rgba(0, 0, 0, 0.5);
+            color: white;
+            border: none;
+            padding: 8px;
+            border-radius: 4px;
+            z-index: 90;
+        }
+        /* Terminal (Claude CLI) view */
+        #terminal {
+            display: none;
+            margin: 50px 0 70px 0;
+            padding: 10px 12px;
+            text-align: left;
+            font-family: "Courier New", Consolas, monospace;
+            font-size: 20px;
+            line-height: 1.25;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            color: #000;
+            background-color: #fff;
+            min-height: calc(100vh - 120px);
+        }
+        /* Light theme while showing the terminal — easier on e-ink */
+        body.terminal-mode { background-color: #fff; color: #000; }
+        body.terminal-mode #status { background-color: #eee; color: #000; }
+        body.terminal-mode #controls { background-color: #eee; }
+
+        /* Removed all loading/spinner related CSS */
+    </style>
+</head>
+<body>
+    <div id="status">Ready to connect</div>
+    <img id="screen" src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==" alt="Screen will appear here">
+    <pre id="terminal"></pre>
+    <button class="fullscreen-button" id="fullscreenBtn">⛶</button>
+    <div id="controls">
+        <button id="connectBtn">Connect</button>
+        <button id="rotateBtn">🔄 Rotate</button>
+        <button id="fitBtn">Fit: whole</button>
+        <button id="controlBtn">🖱 Control: off</button>
+        <a href="/simple" style="padding:12px 16px;font-size:14px;background:#607D8B;color:#fff;border-radius:4px;text-decoration:none;">Simple view</a>
+    </div>
+    
+    <!-- Removed the loading overlay entirely -->
+
+    <script>
+        const statusDiv = document.getElementById('status');
+        const connectBtn = document.getElementById('connectBtn');
+        const rotateBtn = document.getElementById('rotateBtn');
+        const screenImg = document.getElementById('screen');
+        const terminalPre = document.getElementById('terminal');
+        const fullscreenBtn = document.getElementById('fullscreenBtn');
+        const fitBtn = document.getElementById('fitBtn');
+        const controlBtn = document.getElementById('controlBtn');
+        let controlEnabled = false;
+        let socket = null;
+        let reconnectAttempts = 0;
+        let reconnectInterval = null;
+        let serverIP = '';
+        let serverPort = '';
+        let currentRotation = 0; // Track current rotation locally
+
+        // Older devices (e.g. Kindle 4) have no WebSocket — fall back to the
+        // no-JavaScript auto-refresh page so a single URL works everywhere.
+        if (typeof window.WebSocket === 'undefined' && typeof window.MozWebSocket === 'undefined') {
+            window.location.href = '/simple';
+        }
+        
+        // Handle fullscreen
+        fullscreenBtn.addEventListener('click', () => {
+            if (!document.fullscreenElement) {
+                document.documentElement.requestFullscreen().catch(err => {
+                    alert(`Error attempting to enable fullscreen: ${err.message}`);
+                });
+            } else {
+                document.exitFullscreen();
+            }
+        });
+        
+        // Prevent screen from sleeping on iOS
+        function preventSleep() {
+            if ('wakeLock' in navigator) {
+                let wakeLock = null;
+                
+                const requestWakeLock = async () => {
+                    try {
+                        wakeLock = await navigator.wakeLock.request('screen');
+                        wakeLock.addEventListener('release', () => {
+                            console.log('Wake Lock released');
+                            // Try to reacquire
+                            setTimeout(requestWakeLock, 1000);
+                        });
+                        console.log('Wake Lock acquired');
+                    } catch (err) {
+                        console.error(`Wake Lock error: ${err.message}`);
+                    }
+                };
+                
+                requestWakeLock();
+                
+                // Reacquire wake lock when visibility changes
+                document.addEventListener('visibilitychange', () => {
+                    if (document.visibilityState === 'visible' && wakeLock === null) {
+                        requestWakeLock();
+                    }
+                });
+            }
+        }
+        
+        // Function to auto-detect WebSocket port
+        async function getWebSocketPort() {
+            try {
+                // Add a timeout to the fetch request
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 3000); // 3 second timeout
+                
+                const response = await fetch('/get_ws_port', { 
+                    signal: controller.signal 
+                });
+                clearTimeout(timeoutId);
+                
+                if (!response.ok) throw new Error('Failed to get WebSocket port');
+                const data = await response.json();
+                console.log("Received WebSocket port:", data.ws_port);
+                return data.ws_port;
+            } catch (error) {
+                console.error('Error fetching WebSocket port:', error);
+                // Show the error in the status
+                statusDiv.textContent = `Port detection error: ${error.message}`;
+                return null;
+            }
+        }
+        
+        // Function to connect to the server
+        async function connectToServer(ip, port) {
+            if (socket && socket.readyState === WebSocket.OPEN) {
+                socket.close();
+                return;
+            }
+            
+            try {
+                serverIP = ip || serverIP || window.location.hostname;
+                
+                if (!port) {
+                    statusDiv.textContent = "Detecting WebSocket port...";
+                    serverPort = await getWebSocketPort();
+                    if (!serverPort) {
+                        // If we failed to get the port, use the default
+                        serverPort = "8765";
+                        statusDiv.textContent = "Using default WebSocket port 8765";
+                    }
+                } else {
+                    serverPort = port;
+                }
+                
+                statusDiv.textContent = "Connecting...";
+                socket = new WebSocket(`ws://${serverIP}:${serverPort}`);
+                
+                // Set a connection timeout
+                const connectionTimeout = setTimeout(() => {
+                    if (socket.readyState !== WebSocket.OPEN) {
+                        socket.close();
+                        statusDiv.textContent = "Connection timeout - try again";
+                        connectBtn.textContent = "Connect";
+                        connectBtn.classList.remove('disconnect');
+                    }
+                }, 5000);
+                
+                socket.onopen = () => {
+                    clearTimeout(connectionTimeout);
+                    statusDiv.textContent = `Connected to ${serverIP}:${serverPort}`;
+                    connectBtn.textContent = "Disconnect";
+                    connectBtn.classList.add('disconnect');
+                    reconnectAttempts = 0;
+                    clearInterval(reconnectInterval);
+                    
+                    // Prevent device from sleeping
+                    preventSleep();
+                };
+                
+                socket.onclose = () => {
+                    statusDiv.textContent = "Disconnected";
+                    connectBtn.textContent = "Connect";
+                    connectBtn.classList.remove('disconnect');
+                    
+                    // Auto-reconnect logic
+                    if (reconnectAttempts < 5) {
+                        reconnectAttempts++;
+                        statusDiv.textContent = `Reconnecting... (${reconnectAttempts}/5)`;
+                        setTimeout(() => connectToServer(), 1000 * reconnectAttempts);
+                    } else {
+                        // Live streaming isn't working here — offer the universal page
+                        statusDiv.innerHTML = 'Live view unavailable. <a href="/simple" style="color:#4CAF50;">Open simple view &rarr;</a>';
+                    }
+                };
+                
+                socket.onerror = (error) => {
+                    statusDiv.textContent = "Connection error - check IP and port";
+                    connectBtn.textContent = "Connect";
+                    connectBtn.classList.remove('disconnect');
+                    console.error("WebSocket error:", error);
+                };
+                
+                socket.onmessage = (event) => {
+                    try {
+                        const data = JSON.parse(event.data);
+                        if (data.type === "screen") {
+                            // Screen mirror mode: show the image, hide the terminal
+                            document.body.classList.remove("terminal-mode");
+                            terminalPre.style.display = "none";
+                            screenImg.style.display = "";
+
+                            // Update the image source with the new screenshot.
+                            // Rotation is now applied server-side (works on all
+                            // devices incl. the no-JS page), so we don't rotate here;
+                            // the Rotate button still adds an extra local rotation.
+                            const fmt = data.format || 'jpeg';
+                            screenImg.src = `data:image/${fmt};base64,${data.image}`;
+                        } else if (data.type === "terminal") {
+                            // Terminal mode: show the text, hide the image
+                            document.body.classList.add("terminal-mode");
+                            screenImg.style.display = "none";
+                            terminalPre.style.display = "block";
+
+                            terminalPre.textContent = data.text || "";
+                            if (data.fontSize) {
+                                terminalPre.style.fontSize = data.fontSize + "px";
+                            }
+                        }
+                    } catch (e) {
+                        console.error("Error parsing message", e);
+                    }
+                };
+            } catch (error) {
+                console.error("Connection error:", error);
+                statusDiv.textContent = `Error: ${error.message}`;
+            }
+        }
+        
+        // Function to apply rotation to the screen image
+        function applyRotation(degrees) {
+            console.log(`Applying rotation: ${degrees} degrees`);
+            
+            // Remove any existing rotation classes
+            screenImg.classList.remove('rotated-90', 'rotated-270');
+            
+            // Apply the CSS rotation transform
+            screenImg.style.transform = `rotate(${degrees}deg)`;
+            
+            // Add appropriate class for dimension adjustments
+            if (degrees === 90 || degrees === 270) {
+                screenImg.classList.add(`rotated-${degrees}`);
+                // For portrait orientations (90/270), adjust the sizing
+                screenImg.style.width = 'auto';
+                screenImg.style.height = '100%';
+                screenImg.style.maxWidth = 'calc(100vh - 120px)';
+                screenImg.style.maxHeight = 'calc(100vw - 40px)';
+            } else {
+                // For normal orientations (0/180), use full width
+                screenImg.style.width = '100%';
+                screenImg.style.height = 'auto';
+                screenImg.style.maxWidth = '100%';
+                screenImg.style.maxHeight = 'calc(100vh - 120px)';
+            }
+        }
+        
+        // Rotation button
+        rotateBtn.addEventListener('click', () => {
+            currentRotation = (currentRotation + 90) % 360;
+            applyRotation(currentRotation);
+        });
+
+        // Fit toggle: "whole" (contain — fits the whole frame, may letterbox)
+        // vs "fill" (cover — fills the screen, crops the overflow)
+        let fitMode = 'contain';
+        fitBtn.addEventListener('click', () => {
+            fitMode = (fitMode === 'contain') ? 'cover' : 'contain';
+            screenImg.style.objectFit = fitMode;
+            fitBtn.textContent = (fitMode === 'contain') ? 'Fit: whole' : 'Fit: fill';
+        });
+
+        // Control toggle: when ON, taps on the image click the PC (remote control).
+        controlBtn.addEventListener('click', () => {
+            controlEnabled = !controlEnabled;
+            controlBtn.textContent = controlEnabled ? '🖱 Control: ON' : '🖱 Control: off';
+            // The image normally ignores pointer events; enable them to catch taps.
+            screenImg.style.pointerEvents = controlEnabled ? 'auto' : 'none';
+        });
+
+        // Map a click/tap on the (object-fit) image to a normalized point and send it.
+        function sendTap(clientX, clientY, action) {
+            if (!controlEnabled || !socket || socket.readyState !== WebSocket.OPEN) return;
+            const nw = screenImg.naturalWidth, nh = screenImg.naturalHeight;
+            if (!nw || !nh) return;
+            const rect = screenImg.getBoundingClientRect();
+            const fit = getComputedStyle(screenImg).objectFit;
+            const scale = (fit === 'cover')
+                ? Math.max(rect.width / nw, rect.height / nh)
+                : Math.min(rect.width / nw, rect.height / nh);
+            const rw = nw * scale, rh = nh * scale;
+            const offx = (rect.width - rw) / 2, offy = (rect.height - rh) / 2;
+            let x = (clientX - rect.left - offx) / rw;
+            let y = (clientY - rect.top - offy) / rh;
+            x = Math.min(Math.max(x, 0), 1);
+            y = Math.min(Math.max(y, 0), 1);
+            socket.send(JSON.stringify({ type: 'input', action: action || 'click', x: x, y: y }));
+        }
+
+        screenImg.addEventListener('click', (e) => { sendTap(e.clientX, e.clientY, 'click'); });
+        screenImg.addEventListener('touchend', (e) => {
+            if (e.changedTouches && e.changedTouches.length) {
+                const t = e.changedTouches[0];
+                sendTap(t.clientX, t.clientY, 'click');
+                e.preventDefault();
+            }
+        }, { passive: false });
+        
+        // Connect button
+        connectBtn.addEventListener('click', () => {
+            if (socket && socket.readyState === WebSocket.OPEN) {
+                socket.close();
+            } else {
+                // Direct connect with auto-port detection
+                connectToServer(window.location.hostname, null);
+            }
+        });
+        
+        // Try to connect automatically when the page loads
+        document.addEventListener('DOMContentLoaded', () => {
+            setTimeout(() => {
+                connectToServer(window.location.hostname, null);
+            }, 500);
+        });
+        
+        // Handle page visibility changes
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'hidden') {
+                // Page is hidden, potentially disconnect to save bandwidth
+                // Uncomment if you want to automatically disconnect when switching apps:
+                // if (socket && socket.readyState === WebSocket.OPEN) socket.close();
+            } else {
+                // Page is visible again, reconnect if needed
+                // Uncomment if you want to automatically reconnect:
+                // if (socket && socket.readyState !== WebSocket.OPEN && reconnectAttempts === 0) {
+                //     connectToServer();
+                // }
+            }
+        });
+    </script>
+</body>
+</html>

@@ -1,0 +1,9 @@
+# Inka runtime + build dependencies (Windows).
+# Install with:  py -3.12 -m pip install -r requirements.txt
+
+pillow>=9.0.0        # screen/window/Android capture + image encoding
+websockets>=11.0.0   # live WebSocket streaming to modern browsers
+pywin32>=300         # window capture, mouse/keyboard injection, park off-screen
+
+# Build only (to produce dist/Inka.exe)
+pyinstaller>=6.0.0

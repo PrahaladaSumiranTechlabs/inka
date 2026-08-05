@@ -1,0 +1,38 @@
+# PC Second Screen - settings (edit these, then eject the Kindle)
+# This file is sourced by /bin/sh, so: NO spaces around '=', no quotes needed.
+
+# Your PC's IP address (set a static IP / DHCP reservation so it never changes)
+IP=192.168.0.189
+
+# Port the Screen Mirror Server listens on (default 8000)
+PORT=8000
+
+# Seconds between CHANGE CHECKS. The Kindle asks the PC "did the frame change?"
+# this often (a tiny, cheap request) and only repaints the e-ink when it actually
+# changed. So you can keep this low (e.g. 3-5) for a responsive feel without extra
+# e-ink flashing when nothing is happening.
+INTERVAL=5
+
+# Your Kindle's screen resolution (the PC resizes the image to exactly this).
+#   Kindle 4 / Keyboard / Touch / basic:  600 x 800
+#   Paperwhite 1/2:                        758 x 1024
+#   Paperwhite 3/4, Oasis:                1072 x 1448  (or 1236 x 1648)
+WIDTH=600
+HEIGHT=800
+
+# Freeze the Kindle UI while showing the PC screen, so it doesn't redraw over
+# the image. 1 = freeze (needed for a persistent picture). 0 = leave UI running
+# (the image will get overwritten by the home screen - only useful for testing).
+#
+# !!! WARNING !!! Stopping the Kindle framework caused a "Your Kindle needs
+# repair" screen on at least one device. It is DISABLED by default (0) for safety.
+# Leave it 0. With it off, the eips image will get overwritten by the Kindle UI,
+# so for a reliable persistent view use the BROWSER page instead:
+#     http://<your-pc-ip>:8000/simple
+# Only set this to 1 if you fully understand the risk (recover with a reboot).
+STOP_FRAMEWORK=0
+
+# How many failed checks (INTERVAL seconds each) with the PC unreachable before
+# the Kindle auto-restores its UI and exits. 10 x 5s = ~50s. Raise it if your
+# Wi-Fi drops a lot and you don't want it releasing during brief outages.
+EXIT_AFTER=10

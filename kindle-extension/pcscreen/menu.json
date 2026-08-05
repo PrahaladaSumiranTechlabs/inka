@@ -1,0 +1,14 @@
+{
+    "items": [
+        {
+            "name": "PC Screen: START",
+            "priority": 1,
+            "action": "./bin/start.sh"
+        },
+        {
+            "name": "PC Screen: STOP",
+            "priority": 2,
+            "action": "./bin/stop.sh"
+        }
+    ]
+}

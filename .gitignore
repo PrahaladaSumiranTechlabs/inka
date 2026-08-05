@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# PyInstaller build artifacts
+build/
+dist/
+*.spec
+
+# Kindle extension runtime log
+pcscreen.log
+
+# OS / editor
+Thumbs.db
+.DS_Store
+.idea/
+.vscode/
