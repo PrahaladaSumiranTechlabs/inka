@@ -1,9 +1,15 @@
-# Inka runtime + build dependencies (Windows).
-# Install with:  py -3.12 -m pip install -r requirements.txt
+# Inka dependencies.  Install with:  python -m pip install -r requirements.txt
 
-pillow>=9.0.0        # screen/window/Android capture + image encoding
+# --- all platforms ---
+pillow>=9.0.0        # image encoding (+ capture fallback)
 websockets>=11.0.0   # live WebSocket streaming to modern browsers
-pywin32>=300         # window capture, mouse/keyboard injection, park off-screen
+mss>=9.0.0           # fast cross-platform screen capture (Windows/macOS/Linux)
 
-# Build only (to produce dist/Inka.exe)
+# --- Windows only (window capture, park off-screen, input injection) ---
+pywin32>=300 ; sys_platform == "win32"
+
+# --- macOS / Linux only (mouse/keyboard remote control) ---
+pyautogui>=0.9.53 ; sys_platform != "win32"
+
+# --- build only (to produce a standalone executable) ---
 pyinstaller>=6.0.0

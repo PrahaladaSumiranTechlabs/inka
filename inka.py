@@ -21,7 +21,9 @@ import html
 import traceback
 from tkinter import ttk
 
-# Optional: pywin32 enables capturing a single application window.
+IS_WINDOWS = (os.name == "nt")
+
+# Optional: pywin32 enables window capture, park off-screen, and input injection.
 try:
     import win32gui
     import win32ui
@@ -31,6 +33,95 @@ try:
     HAS_WIN32 = True
 except ImportError:
     HAS_WIN32 = False
+
+# mss: fast, cross-platform screen capture (Windows/macOS/Linux).
+try:
+    import mss
+    HAS_MSS = True
+except ImportError:
+    HAS_MSS = False
+
+# pyautogui: cross-platform mouse/keyboard injection (used off Windows).
+try:
+    import pyautogui
+    pyautogui.FAILSAFE = False
+    HAS_PYAUTOGUI = True
+except Exception:
+    HAS_PYAUTOGUI = False
+
+
+def grab_fullscreen():
+    """Capture the primary screen as a PIL image, cross-platform (mss), with a
+    Pillow fallback (Windows/macOS)."""
+    if HAS_MSS:
+        with mss.mss() as sct:
+            mons = sct.monitors
+            mon = mons[1] if len(mons) > 1 else mons[0]
+            shot = sct.grab(mon)
+            return Image.frombytes("RGB", shot.size, shot.bgra, "raw", "BGRX")
+    return ImageGrab.grab()
+
+
+# ---- cross-platform input injection (Windows: win32; else: pyautogui) ----
+_PYKEY = {
+    "enter": "enter", "backspace": "backspace", "esc": "esc", "tab": "tab",
+    "space": "space", "up": "up", "down": "down", "left": "left", "right": "right",
+    "del": "delete", "home": "home", "end": "end",
+}
+
+
+def input_click(x, y, button="left"):
+    if HAS_WIN32:
+        win32api.SetCursorPos((x, y))
+        if button == "right":
+            down, up = win32con.MOUSEEVENTF_RIGHTDOWN, win32con.MOUSEEVENTF_RIGHTUP
+        else:
+            down, up = win32con.MOUSEEVENTF_LEFTDOWN, win32con.MOUSEEVENTF_LEFTUP
+        win32api.mouse_event(down, 0, 0, 0, 0)
+        win32api.mouse_event(up, 0, 0, 0, 0)
+    elif HAS_PYAUTOGUI:
+        pyautogui.click(x, y, button=("right" if button == "right" else "left"))
+
+
+def input_move(x, y):
+    if HAS_WIN32:
+        win32api.SetCursorPos((x, y))
+    elif HAS_PYAUTOGUI:
+        pyautogui.moveTo(x, y)
+
+
+def input_key(name):
+    if HAS_WIN32:
+        vk = _PC_VK.get(name)
+        if vk is None:
+            return
+        win32api.keybd_event(vk, 0, 0, 0)
+        win32api.keybd_event(vk, 0, win32con.KEYEVENTF_KEYUP, 0)
+    elif HAS_PYAUTOGUI:
+        k = _PYKEY.get(name)
+        if k:
+            pyautogui.press(k)
+
+
+def input_text(text):
+    if HAS_WIN32:
+        for ch in text:
+            try:
+                res = win32api.VkKeyScan(ch)
+            except Exception:
+                continue
+            if res == -1:
+                continue
+            vk = res & 0xFF
+            shift = (res >> 8) & 1
+            if shift:
+                win32api.keybd_event(0x10, 0, 0, 0)
+            win32api.keybd_event(vk, 0, 0, 0)
+            win32api.keybd_event(vk, 0, win32con.KEYEVENTF_KEYUP, 0)
+            if shift:
+                win32api.keybd_event(0x10, 0, win32con.KEYEVENTF_KEYUP, 0)
+    elif HAS_PYAUTOGUI:
+        pyautogui.typewrite(text)
 
 
 def _inverse_rot_norm(nx, ny, rot):
@@ -1095,13 +1186,7 @@ class MirrorApp:
             if code is not None:
                 adb_keyevent(serial, code)
             return
-        if not HAS_WIN32:
-            return
-        vk = _PC_VK.get(name)
-        if vk is None:
-            return
-        win32api.keybd_event(vk, 0, 0, 0)
-        win32api.keybd_event(vk, 0, win32con.KEYEVENTF_KEYUP, 0)
+        input_key(name)  # cross-platform (win32 on Windows, else pyautogui)
 
     def send_text(self, text):
         """Type text into the focused window (PC) or the Android device."""
@@ -1111,23 +1196,7 @@ class MirrorApp:
         if serial:
             adb_text(serial, text)
             return
-        if not HAS_WIN32:
-            return
-        for ch in text:
-            try:
-                res = win32api.VkKeyScan(ch)
-            except Exception:
-                continue
-            if res == -1:
-                continue
-            vk = res & 0xFF
-            shift = (res >> 8) & 1
-            if shift:
-                win32api.keybd_event(0x10, 0, 0, 0)          # VK_SHIFT down
-            win32api.keybd_event(vk, 0, 0, 0)
-            win32api.keybd_event(vk, 0, win32con.KEYEVENTF_KEYUP, 0)
-            if shift:
-                win32api.keybd_event(0x10, 0, win32con.KEYEVENTF_KEYUP, 0)
+        input_text(text)  # cross-platform
 
     def get_local_ip(self):
         """Get the actual local IP address that can be reached from other devices."""
@@ -1342,8 +1411,8 @@ class MirrorApp:
                 adb_tap(serial, int(nx * aw), int(ny * ah))
             return
 
-        # PC source: move + click via win32.
-        if not HAS_WIN32:
+        # PC source: move + click (cross-platform: win32 on Windows, else pyautogui).
+        if not (HAS_WIN32 or HAS_PYAUTOGUI):
             return
         region = getattr(self, "capture_region", None)
         if not region:
@@ -1353,17 +1422,10 @@ class MirrorApp:
             return
         sx = int(left + nx * w)
         sy = int(top + ny * h)
-        win32api.SetCursorPos((sx, sy))
         if action == "move":
+            input_move(sx, sy)
             return
-        if data.get("button") == "right":
-            down, up = win32con.MOUSEEVENTF_RIGHTDOWN, win32con.MOUSEEVENTF_RIGHTUP
-        else:
-            down, up = win32con.MOUSEEVENTF_LEFTDOWN, win32con.MOUSEEVENTF_LEFTUP
-        if action in ("click", "down"):
-            win32api.mouse_event(down, 0, 0, 0, 0)
-        if action in ("click", "up"):
-            win32api.mouse_event(up, 0, 0, 0, 0)
+        input_click(sx, sy, button=("right" if data.get("button") == "right" else "left"))
     
     def start_server(self):
         if self.ws_port is None:
@@ -1461,7 +1523,7 @@ class MirrorApp:
                 except Exception:
                     self.capture_region = None
             else:
-                screenshot = ImageGrab.grab()
+                screenshot = grab_fullscreen()
                 self.capture_region = (0, 0, screenshot.width, screenshot.height)
         self.capture_rot = self.rotation_var.get()
 
@@ -1501,10 +1563,14 @@ class MirrorApp:
         self.latest_image = base64.b64encode(buffer.getvalue()).decode('utf-8')
 
     def capture_terminal(self):
-        """Grab the current text of a tmux session inside WSL (for Terminal mode)."""
+        """Grab the current text of a tmux session (via WSL on Windows, or native
+        tmux on macOS/Linux) for Terminal mode."""
         distro = (self.distro_var.get() or "Ubuntu").strip()
         session = (self.session_var.get() or "claude").strip()
-        cmd = ["wsl.exe", "-d", distro, "tmux", "capture-pane", "-p", "-t", session]
+        if IS_WINDOWS:
+            cmd = ["wsl.exe", "-d", distro, "tmux", "capture-pane", "-p", "-t", session]
+        else:
+            cmd = ["tmux", "capture-pane", "-p", "-t", session]
         # CREATE_NO_WINDOW keeps a console from flashing on every capture.
         no_window = getattr(subprocess, "CREATE_NO_WINDOW", 0)
         try:

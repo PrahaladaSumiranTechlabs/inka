@@ -1,8 +1,8 @@
 # Inka
 
-**Turn any device — even a decade-old tablet or a jailbroken Kindle — into a live second screen for your Windows PC, and control the PC (or an Android phone) right back from it.**
+**Turn any device — even a decade-old tablet or a jailbroken Kindle — into a live second screen for your PC, and control the PC (or an Android phone) right back from it.**
 
-Inka is a tiny, self-hosted Windows app. It streams your whole screen, a single window, or a terminal to any device on your network through a plain web page — and, if you want, lets that device **tap and type to control the PC**. No accounts, no cloud, no app store.
+Inka is a tiny, self-hosted app that runs on **Windows, macOS, and Linux**. It streams your whole screen, a single window, or a terminal to any device on your network through a plain web page — and, if you want, lets that device **tap and type to control the PC**. No accounts, no cloud, no app store.
 
 It was built around one goal: **make cheap, old, and weird screens useful again** — Android 4.4 tablets, Fire 7s, e-ink Kindles — devices whose ancient browsers choke on modern screen-sharing tools.
 
@@ -23,17 +23,25 @@ It was built around one goal: **make cheap, old, and weird screens useful again*
 
 ## Quick start
 
-**Option A — run it (no build):**
-1. Install Python 3 (the `py` launcher). `pillow`, `websockets`, `pywin32` are needed — `py -3.12 -m pip install -r requirements.txt`.
+**Windows — run it (no build):**
+1. Install Python 3 (the `py` launcher), then `py -3.12 -m pip install -r requirements.txt`.
 2. Double-click **`run.bat`**.
 
-**Option B — build a standalone exe:**
-1. Double-click **`build.bat`** (uses Python **3.12** — see note below).
+**Windows — standalone exe:**
+1. Double-click **`build.bat`** (uses Python **3.12** — see note below), or grab `Inka.exe` from [Releases](../../releases).
 2. Run **`dist\Inka.exe`**. No Python needed on the target machine.
+
+**macOS / Linux:**
+```bash
+pip install pillow websockets mss pyautogui
+python3 inka.py        # or ./run.sh
+```
+- **macOS:** grant Terminal/Python **Screen Recording** (to capture) and **Accessibility** (to control) in System Settings → Privacy & Security.
+- **Linux:** needs an X11/Wayland session for capture.
 
 Then, on any device on the same Wi-Fi, open the URL Inka prints (e.g. `http://192.168.0.50:8000/`).
 
-> **Build note:** build with **Python 3.12**, not 3.14. Python 3.14 embeds Tcl/Tk inside its DLL (`//zipfs:`), which PyInstaller can't package — the resulting exe crashes on startup. `run.bat` (which just runs the script) works on any Python 3.
+> **Windows build note:** build with **Python 3.12**, not 3.14. Python 3.14 embeds Tcl/Tk inside its DLL (`//zipfs:`), which PyInstaller can't package — the resulting exe crashes on startup. `run.bat` (which just runs the script) works on any Python 3.
 
 ---
 
@@ -92,9 +100,24 @@ See [`kindle-extension/pcscreen`](kindle-extension/pcscreen). It's a KUAL add-on
 
 ---
 
+## Platform support
+
+| Capability | Windows | macOS | Linux |
+|---|---|---|---|
+| Full-screen streaming (`mss`) | ✅ | ✅ | ✅ (X11/Wayland) |
+| `/simple`, MJPEG live, WebSocket | ✅ | ✅ | ✅ |
+| Remote control (tap/keyboard) | ✅ `pywin32` | ✅ `pyautogui`\* | ✅ `pyautogui`\* |
+| Terminal mode | ✅ WSL tmux | ✅ native tmux | ✅ native tmux |
+| **Single-window capture** | ✅ | ➖ full-screen only | ➖ full-screen only |
+| **Park off-screen** | ✅ | ➖ | ➖ |
+| Android via ADB / scrcpy | ✅ | ✅ | ✅ |
+
+\* macOS needs Screen Recording + Accessibility permissions.
+
+> The core (stream + view + control + terminal + Android) runs on all three. Single-window capture and park-off-screen use Windows-specific window APIs and are Windows-only for now. **Windows is the tested platform; macOS/Linux are structured and welcome testers/PRs.**
+
 ## Notes & limitations
-- Windows-only host (uses `ImageGrab`, `pywin32`, `eips` is Kindle-side).
-- **Minimized windows can't be captured** — use **Park off-screen** instead.
+- **Minimized windows can't be captured** — use **Park off-screen** (Windows) instead, or keep the window visible.
 - **GPU-heavy windows** (some browsers/games) may capture blank even when only covered; keep them visible, or use full-screen capture.
 - Remote control moves the real mouse/keyboard — it's off by default; only enable it on a trusted network.
 - No encryption/auth — intended for your own LAN.
