@@ -243,9 +243,15 @@ def _linux_capture_window(wid):
 
 
 def _mac_list_windows():
-    """Enumerate real, on-screen application windows on macOS via Quartz."""
+    """Enumerate on-screen application windows on macOS via Quartz.
+
+    Keeps *every* real window (so three VS Code windows show as three, not one),
+    numbering same-named ones. Window *names* only populate once Screen Recording
+    permission is granted; without it every window of an app shows as just the app
+    name — which is why they used to collapse together.
+    """
     out = []
-    seen = set()
+    counts = {}
     opts = (Quartz.kCGWindowListOptionOnScreenOnly |
             Quartz.kCGWindowListExcludeDesktopElements)
     infos = Quartz.CGWindowListCopyWindowInfo(opts, Quartz.kCGNullWindowID) or []
@@ -253,18 +259,43 @@ def _mac_list_windows():
         # Layer 0 = normal app windows; skip menubar, Dock, overlays, wallpaper.
         if int(info.get("kCGWindowLayer", 0)) != 0:
             continue
+        try:
+            if float(info.get("kCGWindowAlpha", 1)) <= 0.0:
+                continue  # fully transparent helper/overlay windows
+        except Exception:
+            pass
         b = info.get("kCGWindowBounds") or {}
         if float(b.get("Width", 0)) < 80 or float(b.get("Height", 0)) < 80:
             continue
         wid = int(info.get("kCGWindowNumber", 0))
         owner = (info.get("kCGWindowOwnerName") or "").strip()
         name = (info.get("kCGWindowName") or "").strip()
-        title = f"{owner} — {name}" if name and name != owner else (owner or name)
-        if not title or title in seen:
-            continue
-        seen.add(title)
-        out.append((wid, title))
+        base = (f"{owner} — {name}" if name and name != owner
+                else (owner or name or f"Window {wid}"))
+        counts[base] = counts.get(base, 0) + 1
+        label = base if counts[base] == 1 else f"{base} ({counts[base]})"
+        out.append((wid, label))
     return out
+
+
+def _mac_screen_capture_ok():
+    """True if macOS Screen Recording permission is granted (or the API is absent
+    on this macOS). Without it, window names are hidden and window/screen capture
+    comes back blank."""
+    if not (IS_MAC and HAS_QUARTZ):
+        return True
+    try:
+        return bool(Quartz.CGPreflightScreenCaptureAccess())
+    except Exception:
+        return True
+
+
+def _mac_request_screen_capture():
+    """Trigger the macOS Screen Recording permission dialog (once)."""
+    try:
+        Quartz.CGRequestScreenCaptureAccess()
+    except Exception:
+        pass
 
 
 def _mac_capture_window(wid):
@@ -1287,6 +1318,16 @@ class MirrorApp:
         """Populate the Capture dropdown with windows and Android devices."""
         items = ["Full Screen"]
         self.window_map = {}
+        # macOS: window capture (and window names) require Screen Recording
+        # permission. Surface it clearly instead of silently returning blanks.
+        if IS_MAC and HAS_QUARTZ and not _mac_screen_capture_ok():
+            if not getattr(self, "_asked_screen_perm", False):
+                self._asked_screen_perm = True
+                _mac_request_screen_capture()
+            items.append("⚠ Grant Screen Recording, then press ⟳")
+            self.update_status(
+                "macOS: grant Inka 'Screen Recording' in System Settings → "
+                "Privacy & Security, quit & reopen Inka, then press ⟳.")
         if HAS_WIN32 or HAS_QUARTZ or HAS_WMCTRL:
             for hwnd, title in list_windows():
                 label = title if len(title) <= 55 else title[:52] + "..."
@@ -1309,7 +1350,15 @@ class MirrorApp:
         """Move the selected capture window off-screen so it keeps rendering (and
         streaming) while being out of the way. Use this instead of minimizing."""
         if not HAS_WIN32:
-            self.update_status("Park needs pywin32 (Windows).")
+            if IS_MAC:
+                self.update_status("Park is Windows-only — and not needed on macOS: "
+                                   "capture grabs the window even when it's behind "
+                                   "others. Just don't minimize it.")
+            elif IS_LINUX:
+                self.update_status("Park is Windows-only. On Linux, keep the window "
+                                   "visible and unobscured for window capture.")
+            else:
+                self.update_status("Park needs pywin32 (Windows).")
             return
         sel = self.window_var.get()
         hwnd = self.window_map.get(sel)
