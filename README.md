@@ -70,6 +70,15 @@ Handy URLs:
 | `…&dw=600` | Set display width for accurate tap mapping (7" portrait) |
 | `…&bar=0` | Hide the toolbar for a clean full view |
 
+### Multiple devices, each a different screen
+Every device can choose **its own** source — so three Kindles can show three different things at once, and Inka captures them all in parallel.
+
+- On a device, open the picker: **`http://<PC-IP>:8000/simple?pick=1`** (or tap **📺 Screens** in the toolbar) and choose Full Screen, a specific window, or an Android device.
+- Or link directly: `…/simple?src=win:<hwnd>` / `…/simple?src=screen` / `…/simple?src=adb:<serial>`.
+- Control (`?tap=1`) is per-source too — each device controls only what it's showing.
+
+No virtual-display driver required. (A true virtual-monitor mode — real extra Windows desktops via a signed driver — is on the roadmap.)
+
 ### Remote control
 1. Tick **"Allow remote control (taps click this PC)"** in the app (safety gate, off by default).
 2. On the device, enable **🖱 Control** (or use `?tap=1`).

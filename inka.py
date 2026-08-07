@@ -442,9 +442,19 @@ class CustomHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
         tap = q.get('tap', ['0'])[0] == '1'   # no-JS tap-to-click control
         live = q.get('live', ['0'])[0] == '1'  # MJPEG realtime stream (no JS)
         dw = _clamp('dw', 1024, 100, 4000)     # display width used for tap mapping
+        src = q.get('src', [''])[0]            # per-device source (?src=win:HWND etc.)
+        pick = q.get('pick', ['0'])[0] == '1'  # show the source picker
+
+        # This device's chosen source frame (marks it active so it keeps capturing).
+        frame, src_key = (app.frame_for(src) if app else (None, 'screen'))
+
+        # Picker page: list every source this device can pick.
+        if pick and app:
+            return self._serve_picker(app, live, tap)
 
         # Read the plain mirror attribute (never a Tk var) from this thread.
         mode = getattr(app, 'active_mode', 'screen') if app else 'screen'
+        show_terminal = (mode == 'terminal') and not src  # a picked src is always image
 
         def link(r=None, f=None, fs=None, t=None, lv=None):
             return (f"/simple?r={refresh if r is None else r}"
@@ -452,15 +462,16 @@ class CustomHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
                     f"&fs={fontsize if fs is None else fs}"
                     f"&tap={('1' if tap else '0') if t is None else t}"
                     f"&live={('1' if live else '0') if lv is None else lv}"
-                    f"&dw={dw}")
+                    f"&dw={dw}&src={src}")
 
+        srcq = f"&src={src}" if src else ""
         # Image source: live MJPEG stream, or a single cache-busted frame.
-        img_src = "/mjpeg" if live else f"/frame?ts={int(time.time())}"
+        img_src = (f"/mjpeg?src={src}" if live else f"/frame?ts={int(time.time())}{srcq}")
 
         auto = 'manual' if refresh == 0 else f'{refresh}s'
         bare = q.get('bar', ['1'])[0] == '0'   # bar=0 hides the control bar entirely
         # Full-screen image modes float the bar (not in tap mode, which is fixed-size).
-        full = (mode != 'terminal') and fit in ('screen', 'cover') and not tap
+        full = (not show_terminal) and fit in ('screen', 'cover') and not tap
         bar_pos = ('position:fixed;top:0;left:0;right:0;z-index:10;opacity:0.92;'
                    if full else '')
         bar = '' if bare else (
@@ -480,11 +491,12 @@ class CustomHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
             f'<a href="{link(fs=min(60, fontsize + 4))}">A+</a> &nbsp; '
             f'<a href="{link(t=("0" if tap else "1"))}">'
             f'{"🖱 Control: ON" if tap else "🖱 Control: off"}</a> &nbsp; '
+            f'<a href="{link()}&pick=1">📺 Screens</a> &nbsp; '
             f'<a href="{link()}&bar=0">hide bar</a>'
             '</div>'
         )
 
-        if mode == 'terminal':
+        if show_terminal:
             text = (app.latest_text if app and app.latest_text else '(waiting for terminal...)')
             content = (f'<pre style="white-space:pre-wrap;word-wrap:break-word;'
                        f'font-family:monospace;font-size:{fontsize}px;margin:0;padding:6px;'
@@ -492,7 +504,7 @@ class CustomHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
         elif tap:
             # No-JS control: an <input type=image> submits the tap's pixel coords.
             # We display at a fixed dw x dh so those coords map linearly to [0,1].
-            lw, lh = (app.latest_size or (dw, dw)) if app else (dw, dw)
+            lw, lh = (frame["size"] if frame else (app.latest_size if app else None)) or (dw, dw)
             dh = int(dw * lh / lw) if lw else dw
             form_html = (
                 '<form action="/click" method="get" style="margin:0">'
@@ -502,6 +514,7 @@ class CustomHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
                 f'<input type="hidden" name="h" value="{dh}">'
                 f'<input type="hidden" name="dw" value="{dw}">'
                 f'<input type="hidden" name="r" value="{refresh}">'
+                f'<input type="hidden" name="src" value="{src}">'
                 '</form>'
             )
             keys = [("enter", "Enter"), ("backspace", "&#9003;"), ("esc", "Esc"),
@@ -515,9 +528,10 @@ class CustomHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
                 '<input name="text" size="14" style="font-size:16px;">'
                 f'<input type="hidden" name="dw" value="{dw}">'
                 f'<input type="hidden" name="r" value="{refresh}">'
+                f'<input type="hidden" name="src" value="{src}">'
                 '<input type="submit" value="Type"></form> &nbsp; '
                 + ' '.join(
-                    f'<a href="/key?k={k}&dw={dw}&r={refresh}" style="text-decoration:none;'
+                    f'<a href="/key?k={k}&dw={dw}&r={refresh}&src={src}" style="text-decoration:none;'
                     f'border:1px solid #000;padding:4px 9px;color:#000;">{lbl}</a>'
                     for k, lbl in keys)
                 + '</div>'
@@ -570,56 +584,91 @@ class CustomHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
         tx, ty = _f("t.x"), _f("t.y")
         w, h = _f("w", 0), _f("h", 0)
         dw, r = int(_f("dw", 1024)), int(_f("r", 15))
+        src = q.get("src", [""])[0]
         if app and w > 0 and h > 0:
             nx = min(max(tx / w, 0.0), 1.0)
             ny = min(max(ty / h, 0.0), 1.0)
             try:
-                app._handle_input({"type": "input", "action": "click", "x": nx, "y": ny})
+                app.inject_at(src, nx, ny, "click")
             except Exception as e:
                 print("no-JS click inject error:", e)
         # Redirect back to the tap page so the browser reloads a fresh frame.
-        self._redirect_tap(dw, r)
+        self._redirect_tap(dw, r, src)
 
-    def _redirect_tap(self, dw, r):
+    def _redirect_tap(self, dw, r, src=""):
+        srcq = f"&src={src}" if src else ""
         self.send_response(302)
-        self.send_header("Location", f"/simple?tap=1&dw={int(dw)}&r={int(r)}")
+        self.send_header("Location", f"/simple?tap=1&dw={int(dw)}&r={int(r)}{srcq}")
         self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
         self.end_headers()
 
     def serve_key(self):
-        """No-JS special key / Android nav: /key?k=enter&dw=&r=."""
+        """No-JS special key / Android nav: /key?k=enter&dw=&r=&src=."""
         q = parse_qs(urlparse(self.path).query)
         name = q.get("k", [""])[0]
+        src = q.get("src", [""])[0]
         try:
             dw = int(q.get("dw", [1024])[0]); r = int(q.get("r", [15])[0])
         except Exception:
             dw, r = 1024, 15
         if self.app and name:
             try:
-                self.app.send_key(name)
+                self.app.send_key(name, src)
             except Exception as e:
                 print("key inject error:", e)
-        self._redirect_tap(dw, r)
+        self._redirect_tap(dw, r, src)
 
     def serve_type(self):
-        """No-JS text typing: /type?text=hello&dw=&r=."""
+        """No-JS text typing: /type?text=hello&dw=&r=&src=."""
         q = parse_qs(urlparse(self.path).query)
         text = q.get("text", [""])[0]
+        src = q.get("src", [""])[0]
         try:
             dw = int(q.get("dw", [1024])[0]); r = int(q.get("r", [15])[0])
         except Exception:
             dw, r = 1024, 15
         if self.app and text:
             try:
-                self.app.send_text(text)
+                self.app.send_text(text, src)
             except Exception as e:
                 print("type inject error:", e)
-        self._redirect_tap(dw, r)
+        self._redirect_tap(dw, r, src)
+
+    def _serve_picker(self, app, live, tap):
+        """List every source this device can pick (full screen, each window, Android)."""
+        lv = "1" if live else "0"
+        tp = "1" if tap else "0"
+
+        def item(key, label):
+            return (f'<a href="/simple?src={key}&live={lv}&tap={tp}&r=15" '
+                    'style="display:block;padding:16px;font-size:20px;'
+                    'border-bottom:1px solid #ccc;color:#000;text-decoration:none;">'
+                    f'{html.escape(label)}</a>')
+
+        rows = [item("screen", "🖥  Full Screen")]
+        for label, hwnd in list(getattr(app, "window_map", {}).items()):
+            rows.append(item(f"win:{hwnd}", f"🪟  {label}"))
+        for label, serial in list(getattr(app, "android_map", {}).items()):
+            rows.append(item(f"adb:{serial}", f"📱  {label}"))
+        page = (
+            '<html><head><meta name="viewport" content="width=device-width, initial-scale=1">'
+            '<style>body{margin:0;font-family:sans-serif;background:#fff;color:#000;}'
+            'h3{padding:12px;margin:0;background:#eee;}</style></head><body>'
+            '<h3>Pick what to show on THIS device:</h3>' + ''.join(rows) +
+            '</body></html>'
+        )
+        data = page.encode('utf-8')
+        self.send_response(200)
+        self.send_header('Content-type', 'text/html; charset=utf-8')
+        self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
+        self.end_headers()
+        self.wfile.write(data)
 
     def serve_mjpeg(self):
         """Live MJPEG stream (multipart/x-mixed-replace) — realtime, no JS.
         Only pushes a new part when the frame actually changed (change-detection)."""
         app = self.app
+        src = parse_qs(urlparse(self.path).query).get('src', [''])[0]
         self.send_response(200)
         self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=frame")
         self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
@@ -628,9 +677,13 @@ class CustomHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
         last_ver = None
         try:
             while True:
-                ver = getattr(app, "frame_version", 0) if app else 0
-                b64 = app.latest_image if app else None
-                fmt = getattr(app, "latest_format", "jpeg") if app else "jpeg"
+                frame, _key = app.frame_for(src) if app else (None, None)
+                if frame:
+                    ver, b64, fmt = frame["version"], frame["image"], frame["format"]
+                else:
+                    ver = getattr(app, "frame_version", 0) if app else 0
+                    b64 = app.latest_image if app else None
+                    fmt = getattr(app, "latest_format", "jpeg") if app else "jpeg"
                 if b64 and ver != last_ver:
                     last_ver = ver
                     raw = base64.b64decode(b64)
@@ -658,7 +711,9 @@ class CustomHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
         """Return a small change token (frame version). Clients poll this cheaply
         and only re-fetch /frame when it differs from the last one they painted."""
         app = self.app
-        version = getattr(app, 'frame_version', 0) if app else 0
+        src = parse_qs(urlparse(self.path).query).get('src', [''])[0]
+        frame, _key = app.frame_for(src) if app else (None, None)
+        version = frame["version"] if frame else (getattr(app, 'frame_version', 0) if app else 0)
         body = str(version).encode('utf-8')
         self.send_response(200)
         self.send_header('Content-type', 'text/plain')
@@ -677,6 +732,7 @@ class CustomHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
         """
         app = self.app
         q = parse_qs(urlparse(self.path).query)
+        src = q.get('src', [''])[0]
 
         want_png = q.get('png', ['0'])[0] == '1'
         try:
@@ -685,11 +741,10 @@ class CustomHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
         except Exception:
             w = h = 0
 
-        # Terminal mode: render the text into an image so the Kindle eips
-        # extension (which fetches /frame) shows crisp terminal text, not a
-        # stale window screenshot.
+        # Terminal mode (only when no explicit ?src): render the text into an image
+        # so the Kindle eips extension shows crisp terminal text, not a screenshot.
         mode = getattr(app, 'active_mode', 'screen') if app else 'screen'
-        if mode == 'terminal':
+        if mode == 'terminal' and not src:
             text = getattr(app, 'latest_text', None) if app else None
             tw = w if w > 0 else 600
             th = h if h > 0 else 800
@@ -710,8 +765,14 @@ class CustomHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
             self.wfile.write(raw)
             return
 
-        b64 = app.latest_image if app else None
-        fmt = getattr(app, 'latest_format', 'jpeg') if app else 'jpeg'
+        frame, _key = app.frame_for(src) if app else (None, None)
+        if frame:
+            b64 = frame["image"]
+            fmt_default = frame["format"]
+        else:
+            b64 = app.latest_image if app else None
+            fmt_default = getattr(app, 'latest_format', 'jpeg') if app else 'jpeg'
+        fmt = fmt_default
         if not b64:
             self.send_response(503)
             self.end_headers()
@@ -963,6 +1024,12 @@ class MirrorApp:
         # "Park off-screen" state (stream an app while it's out of the way)
         self.parked_hwnd = None
         self.parked_rect = None
+
+        # Per-device sources: each viewing device can request its own source via
+        # ?src=screen | win:<hwnd> | adb:<serial>. Captured on demand into `frames`.
+        self.frames = {}          # key -> dict(image, format, size, region, rot, android, android_size, version)
+        self._frame_sigs = {}     # key -> last content hash
+        self._src_requested = {}  # key -> last request time (time.time())
         
         # Flag to control the screen capture loop.
         self.capturing = True
@@ -1176,11 +1243,11 @@ class MirrorApp:
         except Exception as e:
             self.update_status(f"scrcpy launch error: {e}")
 
-    def send_key(self, name):
+    def send_key(self, name, src=None):
         """Send a named special key to the active source (PC or Android)."""
         if not getattr(self, "control_enabled", False):
             return
-        serial = getattr(self, "android_active", None)
+        serial = self._android_for_src(src)
         if serial:
             code = _ANDROID_KEY.get(name)
             if code is not None:
@@ -1188,11 +1255,19 @@ class MirrorApp:
             return
         input_key(name)  # cross-platform (win32 on Windows, else pyautogui)
 
-    def send_text(self, text):
+    def _android_for_src(self, src):
+        """Resolve the Android serial for a ?src key (or the active one)."""
+        if src:
+            frame = self.frames.get(src)
+            if frame and frame.get("android"):
+                return frame["android"]
+        return getattr(self, "android_active", None)
+
+    def send_text(self, text, src=None):
         """Type text into the focused window (PC) or the Android device."""
         if not getattr(self, "control_enabled", False) or not text:
             return
-        serial = getattr(self, "android_active", None)
+        serial = self._android_for_src(src)
         if serial:
             adb_text(serial, text)
             return
@@ -1387,45 +1462,60 @@ class MirrorApp:
                 except Exception as e:
                     print(f"Input inject error: {e}")
 
-    def _handle_input(self, data):
-        """Map a normalized tap to the active source (PC screen/window or Android)."""
+    def frame_for(self, src):
+        """Look up a per-device source frame by ?src key; marks it active so the
+        capture loop keeps refreshing it. src None/'default' -> the GUI source."""
+        key = (getattr(self, "default_src_key", "screen")
+               if (not src or src == "default") else src)
+        self._src_requested[key] = time.time()
+        return self.frames.get(key), key
+
+    def inject_at(self, key, nx, ny, action="click", button="left"):
+        """Inject a tap on a specific source (PC screen/window or Android)."""
+        if self.active_mode == "terminal":
+            return
         if not getattr(self, "control_enabled", False):
             return
-        if self.active_mode == "terminal":
-            return  # no pixel mapping for text mode
         try:
-            nx = min(max(float(data.get("x", 0)), 0.0), 1.0)
-            ny = min(max(float(data.get("y", 0)), 0.0), 1.0)
+            nx = min(max(float(nx), 0.0), 1.0)
+            ny = min(max(float(ny), 0.0), 1.0)
         except (TypeError, ValueError):
             return
-        nx, ny = _inverse_rot_norm(nx, ny, getattr(self, "capture_rot", 0) or 0)
-        action = data.get("action", "click")
-
-        # Android source: tap via adb input at device resolution.
-        serial = getattr(self, "android_active", None)
-        if serial:
-            aw, ah = getattr(self, "android_size", (0, 0))
-            if aw <= 0 or ah <= 0:
-                return
-            if action in ("click", "up"):
-                adb_tap(serial, int(nx * aw), int(ny * ah))
+        if not key or key == "default":
+            key = getattr(self, "default_src_key", "screen")
+        frame = self.frames.get(key)
+        if frame:
+            region = frame.get("region")
+            android = frame.get("android")
+            asize = frame.get("android_size", (0, 0))
+            rot = frame.get("rot", 0)
+        else:
+            region = getattr(self, "capture_region", None)
+            android = getattr(self, "android_active", None)
+            asize = getattr(self, "android_size", (0, 0))
+            rot = getattr(self, "capture_rot", 0)
+        nx, ny = _inverse_rot_norm(nx, ny, rot or 0)
+        if android:
+            aw, ah = asize
+            if aw > 0 and ah > 0 and action in ("click", "up"):
+                adb_tap(android, int(nx * aw), int(ny * ah))
             return
-
-        # PC source: move + click (cross-platform: win32 on Windows, else pyautogui).
-        if not (HAS_WIN32 or HAS_PYAUTOGUI):
-            return
-        region = getattr(self, "capture_region", None)
-        if not region:
+        if not (HAS_WIN32 or HAS_PYAUTOGUI) or not region:
             return
         left, top, w, h = region
         if w <= 0 or h <= 0:
             return
-        sx = int(left + nx * w)
-        sy = int(top + ny * h)
+        sx, sy = int(left + nx * w), int(top + ny * h)
         if action == "move":
             input_move(sx, sy)
             return
-        input_click(sx, sy, button=("right" if data.get("button") == "right" else "left"))
+        input_click(sx, sy, button=button)
+
+    def _handle_input(self, data):
+        """WebSocket control for the default source."""
+        self.inject_at(None, data.get("x", 0), data.get("y", 0),
+                       data.get("action", "click"),
+                       "right" if data.get("button") == "right" else "left")
     
     def start_server(self):
         if self.ws_port is None:
@@ -1486,6 +1576,22 @@ class MirrorApp:
                 else:
                     self.capture_screen()
                     self._bump_version(self.latest_image)
+                    # Also capture any EXTRA sources requested by other devices
+                    # (?src=...) in the last 20s, so multiple Kindles can each
+                    # view a different window/screen at once.
+                    now = time.time()
+                    for key in list(self._src_requested.keys()):
+                        if now - self._src_requested[key] > 20:
+                            self._src_requested.pop(key, None)
+                            self.frames.pop(key, None)
+                            self._frame_sigs.pop(key, None)
+                            continue
+                        if key == getattr(self, "default_src_key", None):
+                            continue
+                        try:
+                            self.capture_one(key)
+                        except Exception as e:
+                            print(f"source {key} capture error: {e}")
                 # Calculate sleep time to match desired FPS
                 time.sleep(1 / self.fps_var.get())
             except Exception as e:
@@ -1499,68 +1605,96 @@ class MirrorApp:
             self._last_sig = sig
             self.frame_version += 1
 
-    def capture_screen(self):
-        # Capture an Android device, a selected window, or the whole screen
+    def _default_src_key(self):
+        """The source key for the GUI's current Capture selection."""
         selection = self.window_var.get()
         if selection in self.android_map:
-            serial = self.android_map[selection]
-            screenshot = adb_screencap(serial)  # may raise; capture_loop retries
-            self.android_active = serial
-            self.android_size = screenshot.size
-            self.capture_region = None  # Android taps map to device coords, not screen
-        else:
-            self.android_active = None
-            hwnd = self.window_map.get(selection) if selection != "Full Screen" else None
-            if hwnd and HAS_WIN32 and win32gui.IsWindow(hwnd):
-                screenshot = capture_window(hwnd)
-                # Screen-space rect for mapping remote taps (off-screen if minimized).
-                try:
-                    if win32gui.IsIconic(hwnd):
-                        self.capture_region = None
-                    else:
-                        l, t, r, b = win32gui.GetWindowRect(hwnd)
-                        self.capture_region = (l, t, r - l, b - t)
-                except Exception:
-                    self.capture_region = None
-            else:
-                screenshot = grab_fullscreen()
-                self.capture_region = (0, 0, screenshot.width, screenshot.height)
-        self.capture_rot = self.rotation_var.get()
+            return "adb:" + self.android_map[selection]
+        hwnd = self.window_map.get(selection) if selection != "Full Screen" else None
+        return ("win:%d" % hwnd) if hwnd else "screen"
 
-        # Rotate on the server so it works on every device — including the no-JS
-        # /simple page (a portrait e-reader can rotate a landscape desktop to fill).
+    def _grab_source(self, key):
+        """Grab a raw PIL image for a source key -> (img, region, android, android_size)."""
+        if key.startswith("adb:"):
+            serial = key[4:]
+            img = adb_screencap(serial)  # may raise; caller retries
+            return img, None, serial, img.size
+        if key.startswith("win:"):
+            try:
+                hwnd = int(key[4:])
+            except ValueError:
+                return None, None, None, (0, 0)
+            if not (HAS_WIN32 and win32gui.IsWindow(hwnd)):
+                return None, None, None, (0, 0)
+            img = capture_window(hwnd)
+            region = None
+            try:
+                if not win32gui.IsIconic(hwnd):
+                    l, t, r, b = win32gui.GetWindowRect(hwnd)
+                    region = (l, t, r - l, b - t)
+            except Exception:
+                region = None
+            return img, region, None, (0, 0)
+        # default: full screen
+        img = grab_fullscreen()
+        return img, (0, 0, img.width, img.height), None, (0, 0)
+
+    def _process_and_encode(self, img):
+        """Apply rotation/scale/e-ink and encode -> (b64, format, (w,h))."""
         rot = self.rotation_var.get()
         if rot:
-            screenshot = screenshot.rotate(-rot, expand=True)
-
-        # Apply resolution scaling if needed
-        scale_factor = self.scale_var.get()
-        if scale_factor < 1.0:
-            new_width = int(screenshot.width * scale_factor)
-            new_height = int(screenshot.height * scale_factor)
-            screenshot = screenshot.resize((new_width, new_height), Image.Resampling.LANCZOS)
-
-        # Remember the final frame size for no-JS tap mapping.
-        self.latest_size = screenshot.size
-
-        # E-ink rendering: color / grayscale / dithered black & white
+            img = img.rotate(-rot, expand=True)
+        sf = self.scale_var.get()
+        if sf < 1.0:
+            img = img.resize((int(img.width * sf), int(img.height * sf)),
+                             Image.Resampling.LANCZOS)
+        size = img.size
         eink = self.eink_var.get()
-        buffer = io.BytesIO()
+        buf = io.BytesIO()
         if eink == "bw":
-            # 1-bit Floyd-Steinberg dither — the classic e-ink look. PNG keeps it crisp.
-            bw = screenshot.convert("L").convert("1", dither=Image.FLOYDSTEINBERG)
-            bw.save(buffer, format="PNG")
-            self.latest_format = "png"
+            img.convert("L").convert("1", dither=Image.FLOYDSTEINBERG).save(buf, "PNG")
+            fmt = "png"
         elif eink == "gray":
-            # Smooth grayscale, boosted contrast — very readable on e-ink. Stays JPEG.
-            gray = ImageOps.autocontrast(screenshot.convert("L"))
-            gray.save(buffer, format="JPEG", quality=self.quality_var.get())
-            self.latest_format = "jpeg"
+            ImageOps.autocontrast(img.convert("L")).save(buf, "JPEG", quality=self.quality_var.get())
+            fmt = "jpeg"
         else:
-            screenshot.save(buffer, format="JPEG", quality=self.quality_var.get())
-            self.latest_format = "jpeg"
-        # Encode the image bytes as a base64 string
-        self.latest_image = base64.b64encode(buffer.getvalue()).decode('utf-8')
+            img.save(buf, "JPEG", quality=self.quality_var.get())
+            fmt = "jpeg"
+        return base64.b64encode(buf.getvalue()).decode("utf-8"), fmt, size
+
+    def _store_source(self, key, is_default=False):
+        """Capture a source, encode it, store in self.frames[key] (versioned)."""
+        img, region, android, asize = self._grab_source(key)
+        if img is None:
+            return
+        b64, fmt, size = self._process_and_encode(img)
+        sig = hash(b64)
+        prev = self.frames.get(key)
+        ver = prev["version"] if prev else 0
+        if sig != self._frame_sigs.get(key):
+            ver += 1
+            self._frame_sigs[key] = sig
+        self.frames[key] = {"image": b64, "format": fmt, "size": size, "region": region,
+                            "rot": self.rotation_var.get(), "android": android,
+                            "android_size": asize, "version": ver}
+        if is_default:
+            self.latest_image = b64
+            self.latest_format = fmt
+            self.latest_size = size
+            self.capture_region = region
+            self.capture_rot = self.rotation_var.get()
+            self.android_active = android
+            self.android_size = asize
+
+    def capture_screen(self):
+        """Capture the GUI-selected (default) source into latest_* and frames[key]."""
+        key = self._default_src_key()
+        self.default_src_key = key
+        self._store_source(key, is_default=True)
+
+    def capture_one(self, key):
+        """Capture an extra per-device source (requested via ?src=)."""
+        self._store_source(key, is_default=False)
 
     def capture_terminal(self):
         """Grab the current text of a tmux session (via WSL on Windows, or native
