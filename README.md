@@ -77,7 +77,25 @@ Every device can choose **its own** source — so three Kindles can show three d
 - Or link directly: `…/simple?src=win:<hwnd>` / `…/simple?src=screen` / `…/simple?src=adb:<serial>`.
 - Control (`?tap=1`) is per-source too — each device controls only what it's showing.
 
-No virtual-display driver required. (A true virtual-monitor mode — real extra Windows desktops via a signed driver — is on the roadmap.)
+No virtual-display driver required. (A true virtual-monitor mode — real extra desktops via a signed driver — is on the roadmap; see below.)
+
+### Mirror vs. true second screen
+Inka **streams a source** you already have — your whole screen, one window, or a terminal. That's *mirroring*, not an *extended* desktop: by itself, your Kindle/tablet can't be a genuine extra monitor that you drag windows onto.
+
+To get a **real second screen**, pair Inka with a **virtual display**, then point Inka's **Full Screen** capture at it (or use `?src=screen`):
+
+- **macOS — with [BetterDisplay](https://github.com/waydabber/BetterDisplay) (free):**
+  1. Install BetterDisplay (`brew install --cask betterdisplay`).
+  2. BetterDisplay menu → **Create New Display → Virtual Display** (pick a resolution that fits your device, e.g. 1024×768 for a 7″ tablet).
+  3. System Settings → Displays → set the virtual display to **Extended** (not Mirrored) and arrange it.
+  4. In Inka, keep **Capture: Full Screen**, grant **Screen Recording**, and open `…/simple` on your device. Now drag any window onto the virtual display and it appears on the device — a true second screen you can also **tap to control**.
+- **Windows — with an IddCx virtual display driver (free, open source):**
+  1. Install a virtual display driver such as [Virtual-Display-Driver](https://github.com/VirtualDrivers/Virtual-Display-Driver) (adds a headless monitor Windows treats as real).
+  2. Settings → System → Display → set the new display to **Extend**.
+  3. In Inka, **Capture: Full Screen** already grabs all displays. To send *only* the virtual one to a device, pick it from **Capture** (each monitor shows as a window/region) or use `?src=screen` and position windows there.
+- **Linux:** add a dummy output (e.g. an `xrandr --addmode` virtual head, or a "dummy" X driver), set it Extended, then point Inka's Full Screen capture at it.
+
+A built-in, signed virtual-monitor mode (no third-party driver) is on the roadmap.
 
 ### Remote control
 1. Tick **"Allow remote control (taps click this PC)"** in the app (safety gate, off by default).
