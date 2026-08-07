@@ -11,5 +11,11 @@ pywin32>=300 ; sys_platform == "win32"
 # --- macOS / Linux only (mouse/keyboard remote control) ---
 pyautogui>=0.9.53 ; sys_platform != "win32"
 
+# --- macOS only (single-window enumeration + capture, like pywin32 on Windows) ---
+pyobjc-framework-Quartz>=9.0 ; sys_platform == "darwin"
+
+# --- Linux note (not a pip package): single-window capture needs `wmctrl`,
+#     e.g.  sudo apt install wmctrl  — full-screen capture works without it.
+
 # --- build only (to produce a standalone executable) ---
 pyinstaller>=6.0.0

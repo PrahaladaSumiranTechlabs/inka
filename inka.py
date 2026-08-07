@@ -4,6 +4,7 @@ import json
 import tkinter as tk
 from PIL import ImageGrab, Image, ImageOps, ImageDraw, ImageFont
 import io
+import sys
 import base64
 import threading
 import time
@@ -48,6 +49,34 @@ try:
     HAS_PYAUTOGUI = True
 except Exception:
     HAS_PYAUTOGUI = False
+
+IS_MAC = (sys.platform == "darwin")
+IS_LINUX = sys.platform.startswith("linux")
+
+# Quartz (pyobjc): single-window enumeration + capture on macOS (the mac
+# equivalent of pywin32's window APIs). Optional — falls back to full screen.
+if IS_MAC:
+    try:
+        import Quartz
+        HAS_QUARTZ = True
+    except Exception:
+        HAS_QUARTZ = False
+else:
+    HAS_QUARTZ = False
+
+# wmctrl: enumerate + locate X11 windows on Linux (region-cropped from the
+# full-screen grab). Optional — falls back to full screen if not installed.
+HAS_WMCTRL = bool(IS_LINUX and shutil.which("wmctrl"))
+
+
+def _btn_kw(color, light_text=True):
+    """Per-platform button coloring. macOS's native (aqua) button ignores `bg`,
+    so `fg="white"` would render white text on a light button = invisible; there
+    we tint via `highlightbackground` and keep the default dark, legible text.
+    Windows/Linux honor bg/fg normally."""
+    if IS_MAC:
+        return {"highlightbackground": color}
+    return {"bg": color, "fg": "white"} if light_text else {"bg": color}
 
 
 def grab_fullscreen():
@@ -138,19 +167,139 @@ def _inverse_rot_norm(nx, ny, rot):
 
 
 def list_windows():
-    """Return a list of (hwnd, title) for visible, titled top-level windows."""
+    """Return a list of (id, title) for visible, titled top-level windows.
+
+    `id` is a Windows HWND or a macOS CGWindowID — both plain ints, so the rest
+    of the app can treat them uniformly under the `win:<id>` source key.
+    """
     result = []
-    if not HAS_WIN32:
+    if HAS_WIN32:
+        def _cb(hwnd, _):
+            if win32gui.IsWindowVisible(hwnd):
+                title = win32gui.GetWindowText(hwnd)
+                if title and title.strip():
+                    result.append((hwnd, title))
+        win32gui.EnumWindows(_cb, None)
         return result
-
-    def _cb(hwnd, _):
-        if win32gui.IsWindowVisible(hwnd):
-            title = win32gui.GetWindowText(hwnd)
-            if title and title.strip():
-                result.append((hwnd, title))
-
-    win32gui.EnumWindows(_cb, None)
+    if HAS_QUARTZ:
+        return _mac_list_windows()
+    if HAS_WMCTRL:
+        return _linux_list_windows()
     return result
+
+
+def _wmctrl_rows():
+    """Parse `wmctrl -lG` -> list of (wid:int, x, y, w, h, title)."""
+    rows = []
+    try:
+        raw = subprocess.run(["wmctrl", "-lG"], capture_output=True,
+                             text=True, timeout=3).stdout
+    except Exception:
+        return rows
+    for line in raw.splitlines():
+        parts = line.split(None, 7)
+        if len(parts) < 8:
+            continue
+        try:
+            wid = int(parts[0], 16)
+            x, y, w, h = int(parts[2]), int(parts[3]), int(parts[4]), int(parts[5])
+        except ValueError:
+            continue
+        rows.append((wid, x, y, w, h, parts[7].strip()))
+    return rows
+
+
+def _linux_list_windows():
+    """Enumerate top-level windows on Linux/X11 via `wmctrl -lG`."""
+    out = []
+    for wid, _x, _y, w, h, title in _wmctrl_rows():
+        if w < 80 or h < 80 or not title:
+            continue
+        out.append((wid, title))
+    return out
+
+
+def _linux_window_region(wid):
+    """(x, y, w, h) on-screen rect for a Linux window id, or None."""
+    for w_id, x, y, w, h, _title in _wmctrl_rows():
+        if w_id == wid:
+            return (x, y, w, h)
+    return None
+
+
+def _linux_capture_window(wid):
+    """Capture one Linux window by cropping its region out of the full grab
+    (works for on-screen, unobscured windows on X11)."""
+    full = grab_fullscreen()
+    r = _linux_window_region(wid)
+    if not r:
+        return full
+    x, y, w, h = r
+    x, y = max(0, x), max(0, y)
+    x2, y2 = min(x + w, full.width), min(y + h, full.height)
+    if x2 <= x or y2 <= y:
+        return full
+    return full.crop((x, y, x2, y2))
+
+
+def _mac_list_windows():
+    """Enumerate real, on-screen application windows on macOS via Quartz."""
+    out = []
+    seen = set()
+    opts = (Quartz.kCGWindowListOptionOnScreenOnly |
+            Quartz.kCGWindowListExcludeDesktopElements)
+    infos = Quartz.CGWindowListCopyWindowInfo(opts, Quartz.kCGNullWindowID) or []
+    for info in infos:
+        # Layer 0 = normal app windows; skip menubar, Dock, overlays, wallpaper.
+        if int(info.get("kCGWindowLayer", 0)) != 0:
+            continue
+        b = info.get("kCGWindowBounds") or {}
+        if float(b.get("Width", 0)) < 80 or float(b.get("Height", 0)) < 80:
+            continue
+        wid = int(info.get("kCGWindowNumber", 0))
+        owner = (info.get("kCGWindowOwnerName") or "").strip()
+        name = (info.get("kCGWindowName") or "").strip()
+        title = f"{owner} — {name}" if name and name != owner else (owner or name)
+        if not title or title in seen:
+            continue
+        seen.add(title)
+        out.append((wid, title))
+    return out
+
+
+def _mac_capture_window(wid):
+    """Capture one macOS window by CGWindowID -> RGB PIL image."""
+    img = Quartz.CGWindowListCreateImage(
+        Quartz.CGRectNull,
+        Quartz.kCGWindowListOptionIncludingWindow,
+        wid,
+        Quartz.kCGWindowImageBoundsIgnoreFraming)
+    if img is None:
+        return grab_fullscreen()
+    w = int(Quartz.CGImageGetWidth(img))
+    h = int(Quartz.CGImageGetHeight(img))
+    if w == 0 or h == 0:
+        return grab_fullscreen()
+    bpr = int(Quartz.CGImageGetBytesPerRow(img))
+    data = Quartz.CGDataProviderCopyData(Quartz.CGImageGetDataProvider(img))
+    buf = bytes(data)
+    # CGImage is BGRA; `bpr` handles any per-row padding.
+    return Image.frombuffer("RGBA", (w, h), buf, "raw", "BGRA", bpr, 1).convert("RGB")
+
+
+def _mac_window_region(wid):
+    """(x, y, w, h) on-screen rect in points for a macOS window id, or None."""
+    try:
+        infos = Quartz.CGWindowListCopyWindowInfo(
+            Quartz.kCGWindowListOptionIncludingWindow, wid) or []
+        for info in infos:
+            if int(info.get("kCGWindowNumber", 0)) == wid:
+                b = info.get("kCGWindowBounds") or {}
+                return (int(b.get("X", 0)), int(b.get("Y", 0)),
+                        int(b.get("Width", 0)), int(b.get("Height", 0)))
+    except Exception:
+        pass
+    return None
 
 
 _FONT_CACHE = {}
@@ -213,7 +362,15 @@ def capture_window(hwnd):
     Uses PrintWindow(PW_RENDERFULLCONTENT); if that yields a black frame (common
     for GPU-rendered windows like Windows Terminal), falls back to grabbing the
     window's on-screen region.
+
+    On macOS/Linux (no pywin32) it delegates to the Quartz / wmctrl paths.
     """
+    if not HAS_WIN32:
+        if HAS_QUARTZ:
+            return _mac_capture_window(hwnd)
+        if HAS_WMCTRL:
+            return _linux_capture_window(hwnd)
+        return grab_fullscreen()
     minimized = bool(win32gui.IsIconic(hwnd))
     if minimized:
         # Minimized windows sit off-screen; use the restored size so PrintWindow
@@ -812,7 +969,13 @@ class MirrorApp:
         self.root = root
         self.root.title("Inka — second screen + remote control")
         self.root.geometry("430x560")  # room for all controls
-        
+        # Force an opaque background. Without this, some macOS Tcl/Tk builds leave
+        # the window's backing store unpainted (garbled/static look).
+        try:
+            self.root.configure(bg="#ECECEC")
+        except Exception:
+            pass
+
         # Create a frame for controls
         control_frame = tk.Frame(root, padx=10, pady=10)
         control_frame.pack(fill=tk.X)
@@ -877,7 +1040,7 @@ class MirrorApp:
         park_frame = tk.Frame(control_frame)
         park_frame.pack(fill=tk.X, pady=2)
         tk.Button(park_frame, text="Park app off-screen (keeps streaming)",
-                  command=self.park_app, bg="#673AB7", fg="white").pack(side=tk.LEFT, padx=2)
+                  command=self.park_app, **_btn_kw("#673AB7")).pack(side=tk.LEFT, padx=2)
         tk.Button(park_frame, text="Bring back",
                   command=self.restore_app).pack(side=tk.LEFT, padx=2)
 
@@ -898,9 +1061,9 @@ class MirrorApp:
         tk.Entry(android_frame, textvariable=self.android_ip_var, width=14).pack(side=tk.LEFT, padx=2)
         tk.Button(android_frame, text="Connect", command=self.connect_android).pack(side=tk.LEFT, padx=2)
         tk.Button(android_frame, text="PC→Phone (adb)", command=self.stream_to_android,
-                  bg="#2196F3", fg="white").pack(side=tk.LEFT, padx=2)
+                  **_btn_kw("#2196F3")).pack(side=tk.LEFT, padx=2)
         tk.Button(android_frame, text="scrcpy", command=self.launch_scrcpy,
-                  bg="#3DDC84").pack(side=tk.LEFT, padx=2)
+                  **_btn_kw("#3DDC84", light_text=False)).pack(side=tk.LEFT, padx=2)
 
         # Add rotation control
         rotation_frame = tk.Frame(control_frame)
@@ -972,12 +1135,12 @@ class MirrorApp:
         test_frame = tk.Frame(control_frame)
         test_frame.pack(fill=tk.X, pady=5)
         
-        self.test_btn = tk.Button(test_frame, text="Test Connection", 
-                                 command=self.test_connection, bg="#2196F3", fg="white")
+        self.test_btn = tk.Button(test_frame, text="Test Connection",
+                                 command=self.test_connection, **_btn_kw("#2196F3"))
         self.test_btn.pack(side=tk.LEFT, padx=5)
-        
+
         self.startstop_btn = tk.Button(test_frame, text="Stop Server",
-                                    command=self.toggle_server, bg="#FF9800", fg="white")
+                                    command=self.toggle_server, **_btn_kw("#FF9800"))
         self.startstop_btn.pack(side=tk.LEFT, padx=5)
         
         # Status label to show server state
@@ -1124,7 +1287,7 @@ class MirrorApp:
         """Populate the Capture dropdown with windows and Android devices."""
         items = ["Full Screen"]
         self.window_map = {}
-        if HAS_WIN32:
+        if HAS_WIN32 or HAS_QUARTZ or HAS_WMCTRL:
             for hwnd, title in list_windows():
                 label = title if len(title) <= 55 else title[:52] + "..."
                 # Disambiguate identical titles by appending the handle
@@ -1624,17 +1787,23 @@ class MirrorApp:
                 hwnd = int(key[4:])
             except ValueError:
                 return None, None, None, (0, 0)
-            if not (HAS_WIN32 and win32gui.IsWindow(hwnd)):
-                return None, None, None, (0, 0)
-            img = capture_window(hwnd)
-            region = None
-            try:
-                if not win32gui.IsIconic(hwnd):
-                    l, t, r, b = win32gui.GetWindowRect(hwnd)
-                    region = (l, t, r - l, b - t)
-            except Exception:
+            if HAS_WIN32:
+                if not win32gui.IsWindow(hwnd):
+                    return None, None, None, (0, 0)
+                img = capture_window(hwnd)
                 region = None
-            return img, region, None, (0, 0)
+                try:
+                    if not win32gui.IsIconic(hwnd):
+                        l, t, r, b = win32gui.GetWindowRect(hwnd)
+                        region = (l, t, r - l, b - t)
+                except Exception:
+                    region = None
+                return img, region, None, (0, 0)
+            if HAS_QUARTZ:
+                return _mac_capture_window(hwnd), _mac_window_region(hwnd), None, (0, 0)
+            if HAS_WMCTRL:
+                return _linux_capture_window(hwnd), _linux_window_region(hwnd), None, (0, 0)
+            return None, None, None, (0, 0)
         # default: full screen
         img = grab_fullscreen()
         return img, (0, 0, img.width, img.height), None, (0, 0)

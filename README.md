@@ -117,13 +117,14 @@ See [`kindle-extension/pcscreen`](kindle-extension/pcscreen). It's a KUAL add-on
 | `/simple`, MJPEG live, WebSocket | ✅ | ✅ | ✅ |
 | Remote control (tap/keyboard) | ✅ `pywin32` | ✅ `pyautogui`\* | ✅ `pyautogui`\* |
 | Terminal mode | ✅ WSL tmux | ✅ native tmux | ✅ native tmux |
-| **Single-window capture** | ✅ | ➖ full-screen only | ➖ full-screen only |
+| **Single-window capture** | ✅ `pywin32` | ✅ `Quartz` | ✅ `wmctrl`\*\* |
 | **Park off-screen** | ✅ | ➖ | ➖ |
 | Android via ADB / scrcpy | ✅ | ✅ | ✅ |
 
 \* macOS needs Screen Recording + Accessibility permissions.
+\*\* Linux single-window capture needs `wmctrl` (`sudo apt install wmctrl`) and an X11 session; it crops the window's region from the full grab, so the window must be on-screen and unobscured. Park-off-screen remains Windows-only.
 
-> The core (stream + view + control + terminal + Android) runs on all three. Single-window capture and park-off-screen use Windows-specific window APIs and are Windows-only for now. **Windows is the tested platform; macOS/Linux are structured and welcome testers/PRs.**
+> The core (stream + view + control + terminal + Android) runs on all three, and single-window capture now works on macOS (Quartz) and Linux (wmctrl) too. Park-off-screen still uses Windows-specific APIs. **Windows is the most tested platform; macOS/Linux are structured and welcome testers/PRs.**
 
 ## Notes & limitations
 - **Minimized windows can't be captured** — use **Park off-screen** (Windows) instead, or keep the window visible.

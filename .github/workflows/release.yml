@@ -47,7 +47,7 @@ jobs:
           pyinstaller --noconfirm --windowed --name Inka
           --add-data "mirrorindex.html:."
           --hidden-import PIL --hidden-import websockets --hidden-import asyncio
-          --hidden-import mss --hidden-import pyautogui
+          --hidden-import mss --hidden-import pyautogui --hidden-import Quartz
           inka.py
       - name: Package DMG
         run: hdiutil create -volname Inka -srcfolder "dist/Inka.app" -ov -format UDZO "dist/Inka.dmg"
@@ -80,7 +80,7 @@ jobs:
           mkdir -p "$PKG/DEBIAN" "$PKG/usr/bin" "$PKG/usr/share/applications"
           cp dist/inka "$PKG/usr/bin/inka"
           chmod 755 "$PKG/usr/bin/inka"
-          printf 'Package: inka\nVersion: %s\nSection: utils\nPriority: optional\nArchitecture: amd64\nMaintainer: PrahaladaSumiranTechlabs <noreply@users.noreply.github.com>\nDescription: Inka - live second screen and remote control for any device\n' "$VERSION" > "$PKG/DEBIAN/control"
+          printf 'Package: inka\nVersion: %s\nSection: utils\nPriority: optional\nArchitecture: amd64\nRecommends: wmctrl\nMaintainer: PrahaladaSumiranTechlabs <noreply@users.noreply.github.com>\nDescription: Inka - live second screen and remote control for any device\n' "$VERSION" > "$PKG/DEBIAN/control"
           printf '[Desktop Entry]\nName=Inka\nExec=/usr/bin/inka\nType=Application\nCategories=Utility;\nTerminal=false\n' > "$PKG/usr/share/applications/inka.desktop"
           dpkg-deb --build --root-owner-group "$PKG"
           mv "${PKG}.deb" dist/Inka.deb
