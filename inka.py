@@ -91,6 +91,44 @@ def grab_fullscreen():
     return ImageGrab.grab()
 
 
+def list_monitors():
+    """Return [(index, left, top, width, height)] for each physical monitor
+    (mss index >= 1; index 0 is the union of all monitors and is skipped).
+
+    This is how a BetterDisplay/virtual-display 'second screen' shows up so a
+    device can be pointed at just that display.
+    """
+    out = []
+    if HAS_MSS:
+        try:
+            with mss.mss() as sct:
+                for i, m in enumerate(sct.monitors):
+                    if i == 0:
+                        continue
+                    out.append((i, m["left"], m["top"], m["width"], m["height"],
+                                bool(m.get("is_primary"))))
+        except Exception:
+            pass
+    return out
+
+
+def grab_monitor(index):
+    """Capture a single monitor by mss index -> (PIL image, region rect)."""
+    if HAS_MSS:
+        try:
+            with mss.mss() as sct:
+                mons = sct.monitors
+                if 0 <= index < len(mons):
+                    m = mons[index]
+                    shot = sct.grab(m)
+                    img = Image.frombytes("RGB", shot.size, shot.bgra, "raw", "BGRX")
+                    return img, (m["left"], m["top"], m["width"], m["height"])
+        except Exception:
+            pass
+    img = grab_fullscreen()
+    return img, (0, 0, img.width, img.height)
+
+
 # ---- cross-platform input injection (Windows: win32; else: pyautogui) ----
 _PYKEY = {
     "enter": "enter", "backspace": "backspace", "esc": "esc", "tab": "tab",
@@ -834,6 +872,8 @@ class CustomHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
                     f'{html.escape(label)}</a>')
 
         rows = [item("screen", "🖥  Full Screen")]
+        for label, idx in list(getattr(app, "monitor_map", {}).items()):
+            rows.append(item(f"mon:{idx}", label))
         for label, hwnd in list(getattr(app, "window_map", {}).items()):
             rows.append(item(f"win:{hwnd}", f"🪟  {label}"))
         for label, serial in list(getattr(app, "android_map", {}).items()):
@@ -1318,6 +1358,16 @@ class MirrorApp:
         """Populate the Capture dropdown with windows and Android devices."""
         items = ["Full Screen"]
         self.window_map = {}
+        # Per-monitor sources (so a virtual/second display can be picked directly).
+        # Only shown when there's more than one display — else "Full Screen" is it.
+        self.monitor_map = {}
+        mons = list_monitors()
+        if len(mons) > 1:
+            for idx, _l, _t, w, h, primary in mons:
+                tag = ", primary" if primary else ""
+                label = f"🖥 Display {idx} ({w}×{h}{tag})"
+                self.monitor_map[label] = idx
+                items.append(label)
         # macOS: window capture (and window names) require Screen Recording
         # permission. Surface it clearly instead of silently returning blanks.
         if IS_MAC and HAS_QUARTZ and not _mac_screen_capture_ok():
@@ -1820,6 +1870,8 @@ class MirrorApp:
     def _default_src_key(self):
         """The source key for the GUI's current Capture selection."""
         selection = self.window_var.get()
+        if selection in getattr(self, "monitor_map", {}):
+            return "mon:%d" % self.monitor_map[selection]
         if selection in self.android_map:
             return "adb:" + self.android_map[selection]
         hwnd = self.window_map.get(selection) if selection != "Full Screen" else None
@@ -1827,6 +1879,13 @@ class MirrorApp:
 
     def _grab_source(self, key):
         """Grab a raw PIL image for a source key -> (img, region, android, android_size)."""
+        if key.startswith("mon:"):
+            try:
+                idx = int(key[4:])
+            except ValueError:
+                idx = 1
+            img, region = grab_monitor(idx)
+            return img, region, None, (0, 0)
         if key.startswith("adb:"):
             serial = key[4:]
             img = adb_screencap(serial)  # may raise; caller retries
