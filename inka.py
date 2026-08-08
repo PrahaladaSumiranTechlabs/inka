@@ -591,6 +591,124 @@ _ANDROID_KEY = {
 }
 
 
+HELP_HTML = """<!DOCTYPE html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Inka — How to use</title>
+<style>
+:root{color-scheme:light dark;}
+*{box-sizing:border-box;}
+body{margin:0;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
+ line-height:1.55;color:#1a1a1a;background:#f6f6f8;}
+.wrap{max-width:820px;margin:0 auto;padding:20px;}
+header{background:linear-gradient(135deg,#2e2a66,#6a3de8);color:#fff;border-radius:16px;
+ padding:22px 24px;margin-bottom:20px;}
+header h1{margin:0 0 4px;font-size:26px;}
+header p{margin:0;opacity:.9;}
+h2{margin:26px 0 8px;font-size:20px;border-bottom:2px solid #6a3de8;padding-bottom:4px;}
+h3{margin:16px 0 6px;font-size:16px;}
+code,kbd{background:#e9e9f2;border-radius:5px;padding:1px 6px;font-size:.92em;}
+.card{background:#fff;border:1px solid #e2e2ec;border-radius:12px;padding:14px 18px;margin:12px 0;}
+ol,ul{margin:8px 0 8px 4px;padding-left:20px;}
+li{margin:4px 0;}
+.os{display:inline-block;font-size:12px;font-weight:700;color:#fff;background:#6a3de8;
+ border-radius:20px;padding:2px 10px;margin-right:6px;vertical-align:middle;}
+.url{word-break:break-all;background:#f0fff6;border:1px solid #b6e8cd;color:#0a5c33;
+ border-radius:8px;padding:8px 10px;display:block;margin:6px 0;font-family:monospace;}
+.warn{background:#fff6e5;border:1px solid #f2c66b;border-radius:10px;padding:10px 14px;margin:10px 0;}
+a{color:#6a3de8;}
+footer{color:#888;font-size:13px;text-align:center;margin:26px 0 10px;}
+@media (prefers-color-scheme:dark){
+ body{color:#e8e8ee;background:#151519;}
+ .card{background:#1e1e26;border-color:#33333f;}
+ code,kbd{background:#33333f;color:#eee;}
+ .url{background:#10241a;border-color:#1f5c3c;color:#7fe0ab;}
+ .warn{background:#332a12;border-color:#6b551f;color:#f0d79a;}
+}
+</style></head><body><div class="wrap">
+<header><h1>📺 Inka — how to use</h1>
+<p>Turn any device into a live second screen for your computer, and control the computer back from it.</p></header>
+
+<div class="card">
+<b>The idea in one line:</b> run Inka on your computer → it prints a web address →
+open that address on your phone, tablet, or Kindle → you see your screen there, and can tap to control it.
+</div>
+
+<h2>1 · Start Inka on your computer</h2>
+
+<h3><span class="os">Windows</span></h3>
+<ul>
+<li>Double-click <code>Inka.exe</code> (from the <a href="https://github.com/PrahaladaSumiranTechlabs/inka/releases">Releases</a> page). No install needed.</li>
+<li>Or run from source: <code>py -3.12 -m pip install -r requirements.txt</code> then double-click <code>run.bat</code>.</li>
+</ul>
+
+<h3><span class="os">macOS</span></h3>
+<ol>
+<li>Open <code>Inka.dmg</code> and drag <b>Inka</b> into <b>Applications</b>.</li>
+<li>First launch: right-click Inka → <b>Open</b> (it's unsigned, so the normal double-click is blocked once).</li>
+<li><b>Grant permissions</b> — System Settings → <b>Privacy &amp; Security</b>:
+ <ul><li><b>Screen Recording</b> → enable Inka (needed to capture the screen/windows), then <b>quit &amp; reopen</b> Inka.</li>
+ <li><b>Accessibility</b> → enable Inka (needed for tap-to-control).</li></ul></li>
+</ol>
+<div class="warn"><b>Seeing blank captures or only one window per app?</b> That's the Screen Recording
+permission not granted yet. Enable it, then fully quit and reopen Inka.</div>
+
+<h3><span class="os">Linux</span></h3>
+<ul>
+<li>Install the package: <code>sudo dpkg -i Inka.deb</code>, then run <code>inka</code>.</li>
+<li>For single-window capture: <code>sudo apt install wmctrl</code> (X11 session). Full-screen works without it.</li>
+<li>Or from source: <code>pip install -r requirements.txt</code> then <code>python3 inka.py</code>.</li>
+</ul>
+
+<h2>2 · Open it on your device</h2>
+<p>Put the device on the <b>same Wi-Fi</b>, then open one of these in its browser:</p>
+<span class="url">__BASE__/</span>
+<p>Modern phone/tablet — full live stream. For <b>old</b> devices (Android 4.4, Fire 7, e-readers, Kindles):</p>
+<span class="url">__BASE__/simple</span>
+<ul>
+<li><code>/simple</code> — works on almost any browser (auto-refreshing image).</li>
+<li><code>/simple?live=1</code> — realtime stream, no reloads.</li>
+<li><code>/simple?tap=1</code> — tap the image to click the PC (+ on-screen keyboard).</li>
+<li><code>/simple?live=1&amp;tap=1</code> — realtime <i>and</i> controllable (best for old tablets).</li>
+</ul>
+<p>The <code>/simple</code> toolbar lets you change refresh speed, fit, live mode, text size, and control — no URL editing.</p>
+
+<h2>3 · Choose what to show</h2>
+<p>In the Inka window, <b>Capture</b> lets you pick:</p>
+<ul>
+<li><b>Full Screen</b> — your whole desktop.</li>
+<li><b>🖥 Display N</b> — one specific monitor (shown when you have more than one).</li>
+<li><b>A window</b> — just one app.</li>
+<li><b>📱 Android</b> — a phone/tablet connected over ADB.</li>
+</ul>
+<p>Each device can even pick its <i>own</i> source: open <span class="url">__BASE__/simple?pick=1</span> or tap <b>📺 Screens</b>.</p>
+
+<h2>4 · Control the computer from the device</h2>
+<ol>
+<li>In the Inka window, tick <b>“Allow remote control (taps click this PC)”</b> (off by default).</li>
+<li>On the device, turn on <b>🖱 Control</b> (or use <code>?tap=1</code>).</li>
+<li>Tap the image to click; use the <b>Type</b> box and key buttons to type.</li>
+</ol>
+
+<h2>5 · Use it as a true second screen</h2>
+<p>Inka <i>mirrors</i> a screen. To get a real <b>extended</b> display you can drag windows onto, pair it with a virtual display:</p>
+<ul>
+<li><span class="os">macOS</span> <a href="https://github.com/waydabber/BetterDisplay">BetterDisplay</a> (free) → create a Virtual Display, set it <b>Extended</b>, then choose it in Inka via <b>Capture → 🖥 Display N</b>.</li>
+<li><span class="os">Windows</span> an IddCx virtual display driver (e.g. <a href="https://github.com/VirtualDrivers/Virtual-Display-Driver">Virtual-Display-Driver</a>) → set it Extend, pick it in Capture.</li>
+<li><span class="os">Linux</span> add a dummy X output, set it Extended, capture it.</li>
+</ul>
+
+<h2>Troubleshooting</h2>
+<ul>
+<li><b>Blank / one-window-per-app (macOS):</b> grant Screen Recording, quit &amp; reopen Inka.</li>
+<li><b>Can't connect from the device:</b> same Wi-Fi? Try the exact address above; some networks block device-to-device — use a phone hotspot, or <b>PC→Phone (adb)</b> over USB.</li>
+<li><b>Minimized window is blank:</b> don't minimize — on Windows use <b>Park off-screen</b>; on macOS just leave it open behind other windows.</li>
+<li><b>E-ink flicker:</b> use the <b>Grayscale</b>/<b>B&amp;W</b> mode and a slower refresh.</li>
+</ul>
+
+<footer>Inka · <a href="https://github.com/PrahaladaSumiranTechlabs/inka">github.com/PrahaladaSumiranTechlabs/inka</a></footer>
+</div></body></html>"""
+
+
 class CustomHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
     def __init__(self, *args, directory=None, ws_port=None, app=None, **kwargs):
         self.ws_port = ws_port
@@ -639,6 +757,9 @@ class CustomHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
             return self.serve_key()
         if path == '/type':
             return self.serve_type()
+        # Cross-platform usage guide (Windows / macOS / Linux).
+        if path == '/help':
+            return self.serve_help()
 
         # Serve the index page for root requests
         if self.path == '/' or self.path == '/index.html':
@@ -646,6 +767,20 @@ class CustomHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
 
         # Otherwise serve files as usual
         return super().do_GET()
+
+    def serve_help(self):
+        """A self-contained cross-platform usage guide, viewable from any device."""
+        app = self.app
+        ip = getattr(app, 'local_ip', '<PC-IP>') if app else '<PC-IP>'
+        port = getattr(app, 'http_port', 8000) if app else 8000
+        base = f"http://{ip}:{port}"
+        page = HELP_HTML.replace("__BASE__", html.escape(base))
+        data = page.encode('utf-8')
+        self.send_response(200)
+        self.send_header('Content-type', 'text/html; charset=utf-8')
+        self.send_header('Cache-Control', 'no-cache')
+        self.end_headers()
+        self.wfile.write(data)
 
     def serve_simple(self):
         """A plain HTML page that auto-refreshes via <meta refresh> — no JS/WebSocket.
@@ -718,6 +853,7 @@ class CustomHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
             f'<a href="{link(t=("0" if tap else "1"))}">'
             f'{"🖱 Control: ON" if tap else "🖱 Control: off"}</a> &nbsp; '
             f'<a href="{link()}&pick=1">📺 Screens</a> &nbsp; '
+            f'<a href="/help">❔ Help</a> &nbsp; '
             f'<a href="{link()}&bar=0">hide bar</a>'
             '</div>'
         )
@@ -1046,6 +1182,17 @@ class MirrorApp:
             self.root.configure(bg="#ECECEC")
         except Exception:
             pass
+        # Window/taskbar icon (bundled next to the script or inside the frozen app).
+        try:
+            _base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+            for _cand in ("icon.png", os.path.join("assets", "icon.png")):
+                _icon = os.path.join(_base, _cand)
+                if os.path.exists(_icon):
+                    self._icon_img = tk.PhotoImage(file=_icon)
+                    self.root.iconphoto(True, self._icon_img)
+                    break
+        except Exception:
+            pass
 
         # Create a frame for controls
         control_frame = tk.Frame(root, padx=10, pady=10)
@@ -1213,6 +1360,9 @@ class MirrorApp:
         self.startstop_btn = tk.Button(test_frame, text="Stop Server",
                                     command=self.toggle_server, **_btn_kw("#FF9800"))
         self.startstop_btn.pack(side=tk.LEFT, padx=5)
+
+        tk.Button(test_frame, text="❔ Help", command=self.open_help,
+                  **_btn_kw("#6A3DE8")).pack(side=tk.LEFT, padx=5)
         
         # Status label to show server state
         self.status_label = tk.Label(root, text="Starting servers...", font=("Arial", 12))
@@ -1638,6 +1788,14 @@ class MirrorApp:
         except Exception as e:
             print(f"Failed to open browser: {e}")
     
+    def open_help(self):
+        """Open the built-in cross-platform usage guide in the default browser."""
+        port = getattr(self, "http_port", 8000)
+        try:
+            webbrowser.open(f"http://127.0.0.1:{port}/help")
+        except Exception as e:
+            print(f"Failed to open help: {e}")
+
     def update_status(self, message):
         # Called from background threads too; root.after() is main-thread-only and
         # can raise. Never let a GUI-update failure kill a server/capture thread.

@@ -8,7 +8,8 @@ py -3.12 -m pip install --upgrade pip
 py -3.12 -m pip install pyinstaller pillow websockets mss pywin32
 echo Building Inka.exe...
 py -3.12 -m PyInstaller --noconfirm --onefile --windowed --name=Inka ^
-  --add-data "mirrorindex.html;." ^
+  --icon assets/icon.ico ^
+  --add-data "mirrorindex.html;." --add-data "assets/icon.png;." ^
   --hidden-import=PIL --hidden-import=websockets --hidden-import=asyncio ^
   --hidden-import=mss ^
   --hidden-import=win32gui --hidden-import=win32ui --hidden-import=win32api ^

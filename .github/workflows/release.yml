@@ -24,7 +24,8 @@ jobs:
       - name: Build Inka.exe
         run: >
           pyinstaller --noconfirm --onefile --windowed --name Inka
-          --add-data "mirrorindex.html;."
+          --icon assets/icon.ico
+          --add-data "mirrorindex.html;." --add-data "assets/icon.png;."
           --hidden-import PIL --hidden-import websockets --hidden-import asyncio
           --hidden-import mss --hidden-import win32gui --hidden-import win32ui
           --hidden-import win32api --hidden-import win32con --hidden-import pywintypes
@@ -42,15 +43,29 @@ jobs:
         with:
           python-version: '3.12'
       - run: pip install pyinstaller pillow websockets mss pyautogui pyobjc-core pyobjc-framework-Quartz
+      - name: Make .icns from icon.png
+        run: |
+          mkdir -p Inka.iconset
+          for s in 16 32 128 256 512; do
+            sips -z $s $s assets/icon.png --out "Inka.iconset/icon_${s}x${s}.png"
+            d=$((s*2))
+            sips -z $d $d assets/icon.png --out "Inka.iconset/icon_${s}x${s}@2x.png"
+          done
+          iconutil -c icns Inka.iconset -o Inka.icns
       - name: Build Inka.app
         run: >
           pyinstaller --noconfirm --windowed --name Inka
-          --add-data "mirrorindex.html:."
+          --icon Inka.icns
+          --add-data "mirrorindex.html:." --add-data "assets/icon.png:."
           --hidden-import PIL --hidden-import websockets --hidden-import asyncio
           --hidden-import mss --hidden-import pyautogui --hidden-import Quartz
           inka.py
-      - name: Package DMG
-        run: hdiutil create -volname Inka -srcfolder "dist/Inka.app" -ov -format UDZO "dist/Inka.dmg"
+      - name: Package DMG (with drag-to-Applications)
+        run: |
+          rm -rf dmgroot && mkdir dmgroot
+          cp -R "dist/Inka.app" dmgroot/
+          ln -s /Applications dmgroot/Applications
+          hdiutil create -volname "Inka" -srcfolder dmgroot -ov -format UDZO "dist/Inka.dmg"
       - uses: actions/upload-artifact@v4
         with:
           name: Inka-macos
@@ -68,7 +83,7 @@ jobs:
       - name: Build inka binary
         run: >
           pyinstaller --noconfirm --onefile --name inka
-          --add-data "mirrorindex.html:."
+          --add-data "mirrorindex.html:." --add-data "assets/icon.png:."
           --hidden-import PIL --hidden-import websockets --hidden-import asyncio
           --hidden-import mss --hidden-import pyautogui
           inka.py
@@ -77,11 +92,13 @@ jobs:
           VERSION="${GITHUB_REF_NAME#v}"
           [ -z "$VERSION" ] && VERSION="1.1.0"
           PKG="inka_${VERSION}_amd64"
-          mkdir -p "$PKG/DEBIAN" "$PKG/usr/bin" "$PKG/usr/share/applications"
+          mkdir -p "$PKG/DEBIAN" "$PKG/usr/bin" "$PKG/usr/share/applications" \
+                   "$PKG/usr/share/icons/hicolor/512x512/apps"
           cp dist/inka "$PKG/usr/bin/inka"
           chmod 755 "$PKG/usr/bin/inka"
+          cp assets/icon.png "$PKG/usr/share/icons/hicolor/512x512/apps/inka.png"
           printf 'Package: inka\nVersion: %s\nSection: utils\nPriority: optional\nArchitecture: amd64\nRecommends: wmctrl\nMaintainer: PrahaladaSumiranTechlabs <noreply@users.noreply.github.com>\nDescription: Inka - live second screen and remote control for any device\n' "$VERSION" > "$PKG/DEBIAN/control"
-          printf '[Desktop Entry]\nName=Inka\nExec=/usr/bin/inka\nType=Application\nCategories=Utility;\nTerminal=false\n' > "$PKG/usr/share/applications/inka.desktop"
+          printf '[Desktop Entry]\nName=Inka\nExec=/usr/bin/inka\nType=Application\nCategories=Utility;\nTerminal=false\nIcon=inka\n' > "$PKG/usr/share/applications/inka.desktop"
           dpkg-deb --build --root-owner-group "$PKG"
           mv "${PKG}.deb" dist/Inka.deb
       - uses: actions/upload-artifact@v4
