@@ -20,14 +20,15 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: pip install pyinstaller pillow websockets mss pywin32
+      - run: pip install pyinstaller pillow websockets mss pywin32 qrcode
       - name: Build Inka.exe
         run: >
           pyinstaller --noconfirm --onefile --windowed --name Inka
           --icon assets/icon.ico
           --add-data "mirrorindex.html;." --add-data "assets/icon.png;."
           --hidden-import PIL --hidden-import websockets --hidden-import asyncio
-          --hidden-import mss --hidden-import win32gui --hidden-import win32ui
+          --hidden-import mss --hidden-import qrcode --hidden-import qrcode.image.pil
+          --hidden-import win32gui --hidden-import win32ui
           --hidden-import win32api --hidden-import win32con --hidden-import pywintypes
           inka.py
       - uses: actions/upload-artifact@v4
@@ -42,7 +43,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: pip install pyinstaller pillow websockets mss pyautogui pyobjc-core pyobjc-framework-Quartz
+      - run: pip install pyinstaller pillow websockets mss pyautogui pyobjc-core pyobjc-framework-Quartz qrcode
       - name: Make .icns from icon.png
         run: |
           mkdir -p Inka.iconset
@@ -59,6 +60,7 @@ jobs:
           --add-data "mirrorindex.html:." --add-data "assets/icon.png:."
           --hidden-import PIL --hidden-import websockets --hidden-import asyncio
           --hidden-import mss --hidden-import pyautogui --hidden-import Quartz
+          --hidden-import qrcode --hidden-import qrcode.image.pil
           inka.py
       - name: Package DMG (with drag-to-Applications)
         run: |
@@ -79,13 +81,14 @@ jobs:
         with:
           python-version: '3.12'
       - run: sudo apt-get update && sudo apt-get install -y python3-tk
-      - run: pip install pyinstaller pillow websockets mss pyautogui python-xlib
+      - run: pip install pyinstaller pillow websockets mss pyautogui python-xlib qrcode
       - name: Build inka binary
         run: >
           pyinstaller --noconfirm --onefile --name inka
           --add-data "mirrorindex.html:." --add-data "assets/icon.png:."
           --hidden-import PIL --hidden-import websockets --hidden-import asyncio
           --hidden-import mss --hidden-import pyautogui
+          --hidden-import qrcode --hidden-import qrcode.image.pil
           inka.py
       - name: Build .deb
         run: |

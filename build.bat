@@ -5,13 +5,13 @@ rem PyInstaller can't package it, so the exe crashes on startup).
 setlocal
 echo Installing build dependencies (Python 3.12)...
 py -3.12 -m pip install --upgrade pip
-py -3.12 -m pip install pyinstaller pillow websockets mss pywin32
+py -3.12 -m pip install pyinstaller pillow websockets mss pywin32 qrcode
 echo Building Inka.exe...
 py -3.12 -m PyInstaller --noconfirm --onefile --windowed --name=Inka ^
   --icon assets/icon.ico ^
   --add-data "mirrorindex.html;." --add-data "assets/icon.png;." ^
   --hidden-import=PIL --hidden-import=websockets --hidden-import=asyncio ^
-  --hidden-import=mss ^
+  --hidden-import=mss --hidden-import=qrcode --hidden-import=qrcode.image.pil ^
   --hidden-import=win32gui --hidden-import=win32ui --hidden-import=win32api ^
   --hidden-import=win32con --hidden-import=pywintypes ^
   inka.py

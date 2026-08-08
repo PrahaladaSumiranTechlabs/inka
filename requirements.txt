@@ -4,6 +4,7 @@
 pillow>=9.0.0        # image encoding (+ capture fallback)
 websockets>=11.0.0   # live WebSocket streaming to modern browsers
 mss>=9.0.0           # fast cross-platform screen capture (Windows/macOS/Linux)
+qrcode>=7.0          # QR code for phone-camera pairing
 
 # --- Windows only (window capture, park off-screen, input injection) ---
 pywin32>=300 ; sys_platform == "win32"

@@ -50,6 +50,13 @@ try:
 except Exception:
     HAS_PYAUTOGUI = False
 
+# qrcode: generate a scannable QR for the connection URL (phone-pairing).
+try:
+    import qrcode
+    HAS_QRCODE = True
+except Exception:
+    HAS_QRCODE = False
+
 IS_MAC = (sys.platform == "darwin")
 IS_LINUX = sys.platform.startswith("linux")
 
@@ -127,6 +134,23 @@ def grab_monitor(index):
             pass
     img = grab_fullscreen()
     return img, (0, 0, img.width, img.height)
+
+
+def make_qr_png(data, box_size=8, border=3):
+    """Return PNG bytes of a QR code for `data`, or None if qrcode is missing."""
+    if not HAS_QRCODE:
+        return None
+    try:
+        qr = qrcode.QRCode(box_size=box_size, border=border,
+                           error_correction=qrcode.constants.ERROR_CORRECT_M)
+        qr.add_data(data)
+        qr.make(fit=True)
+        img = qr.make_image(fill_color="black", back_color="white")
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        return buf.getvalue()
+    except Exception:
+        return None
 
 
 # ---- cross-platform input injection (Windows: win32; else: pyautogui) ----
@@ -1361,6 +1385,8 @@ class MirrorApp:
                                     command=self.toggle_server, **_btn_kw("#FF9800"))
         self.startstop_btn.pack(side=tk.LEFT, padx=5)
 
+        tk.Button(test_frame, text="📱 QR", command=self.show_qr,
+                  **_btn_kw("#3DDC84", light_text=False)).pack(side=tk.LEFT, padx=5)
         tk.Button(test_frame, text="❔ Help", command=self.open_help,
                   **_btn_kw("#6A3DE8")).pack(side=tk.LEFT, padx=5)
         
@@ -1795,6 +1821,31 @@ class MirrorApp:
             webbrowser.open(f"http://127.0.0.1:{port}/help")
         except Exception as e:
             print(f"Failed to open help: {e}")
+
+    def show_qr(self):
+        """Popup a QR code of the connection URL — scan it with a phone camera."""
+        ip = getattr(self, "local_ip", "127.0.0.1")
+        port = getattr(self, "http_port", 8000)
+        url = f"http://{ip}:{port}/"
+        png = make_qr_png(url)
+        if not png:
+            self.update_status("QR needs the 'qrcode' package (pip install qrcode).")
+            return
+        try:
+            b64 = base64.b64encode(png).decode()
+            win = tk.Toplevel(self.root)
+            win.title("Scan to connect")
+            win.configure(bg="#ffffff")
+            win.resizable(False, False)
+            win.transient(self.root)
+            self._qr_photo = tk.PhotoImage(data=b64)  # keep a reference alive
+            tk.Label(win, image=self._qr_photo, bg="#ffffff").pack(padx=18, pady=(18, 8))
+            tk.Label(win, text="📱 Scan with your phone camera", bg="#ffffff",
+                     fg="#111111", font=("Arial", 13, "bold")).pack()
+            tk.Label(win, text=url, bg="#ffffff", fg="#333333",
+                     font=("Consolas", 11)).pack(pady=(2, 16))
+        except Exception as e:
+            self.update_status(f"QR error: {e}")
 
     def update_status(self, message):
         # Called from background threads too; root.after() is main-thread-only and
