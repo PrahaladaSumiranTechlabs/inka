@@ -234,6 +234,7 @@
                 
                 statusDiv.textContent = "Connecting...";
                 socket = new WebSocket(`ws://${serverIP}:${serverPort}`);
+                socket.binaryType = 'blob';  // screen frames arrive as binary blobs
                 
                 // Set a connection timeout
                 const connectionTimeout = setTimeout(() => {
@@ -281,6 +282,18 @@
                 };
                 
                 socket.onmessage = (event) => {
+                    // Binary screen frame (fast path): raw image bytes, no base64.
+                    if (typeof event.data !== "string") {
+                        document.body.classList.remove("terminal-mode");
+                        terminalPre.style.display = "none";
+                        screenImg.style.display = "";
+                        const url = URL.createObjectURL(event.data);
+                        const prev = screenImg._objURL;
+                        screenImg.onload = () => { if (prev) URL.revokeObjectURL(prev); };
+                        screenImg._objURL = url;
+                        screenImg.src = url;
+                        return;
+                    }
                     try {
                         const data = JSON.parse(event.data);
                         if (data.type === "screen") {

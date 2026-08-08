@@ -1339,7 +1339,7 @@ class MirrorApp:
         quality_frame.pack(fill=tk.X, pady=5)
         
         tk.Label(quality_frame, text="Image Quality:").pack(side=tk.LEFT)
-        self.quality_var = tk.IntVar(value=50)
+        self.quality_var = tk.IntVar(value=70)
         quality_slider = ttk.Scale(quality_frame, from_=10, to=95, 
                                    variable=self.quality_var, orient=tk.HORIZONTAL)
         quality_slider.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
@@ -1367,7 +1367,7 @@ class MirrorApp:
         fps_frame.pack(fill=tk.X, pady=5)
         
         tk.Label(fps_frame, text="FPS:").pack(side=tk.LEFT)
-        self.fps_var = tk.IntVar(value=10)
+        self.fps_var = tk.IntVar(value=15)
         fps_slider = ttk.Scale(fps_frame, from_=1, to=30, 
                               variable=self.fps_var, orient=tk.HORIZONTAL)
         fps_slider.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
@@ -1403,6 +1403,8 @@ class MirrorApp:
         
         # This variable will hold the latest captured screen image as a base64 string.
         self.latest_image = None
+        # Same frame as raw bytes, for fast binary WebSocket delivery (no base64).
+        self.latest_image_raw = None
 
         # Latest captured terminal text (for Terminal mode).
         self.latest_text = None
@@ -1735,27 +1737,27 @@ class MirrorApp:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                 s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                 s.bind((self.local_ip, self.http_port))
-                print(f"✓ HTTP port {self.http_port} is accessible")
+                print(f"[OK] HTTP port {self.http_port} is accessible")
         except Exception as e:
-            print(f"✗ HTTP port {self.http_port} test failed: {e}")
-        
+            print(f"[!] HTTP port {self.http_port} test skipped: {e}")
+
         try:
             print(f"Testing WebSocket port {self.ws_port}...")
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                 s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                 s.bind((self.local_ip, self.ws_port))
-                print(f"✓ WebSocket port {self.ws_port} is accessible")
+                print(f"[OK] WebSocket port {self.ws_port} is accessible")
         except Exception as e:
-            print(f"✗ WebSocket port {self.ws_port} test failed: {e}")
-        
+            print(f"[!] WebSocket port {self.ws_port} test skipped: {e}")
+
         # Check for common network interfaces
         try:
             import subprocess
             result = subprocess.run(['ipconfig'], capture_output=True, text=True, timeout=5)
             if 'Wireless LAN adapter Wi-Fi' in result.stdout:
-                print("✓ WiFi adapter detected")
+                print("[OK] WiFi adapter detected")
             else:
-                print("⚠ WiFi adapter not clearly detected")
+                print("[!] WiFi adapter not clearly detected")
         except Exception as e:
             print(f"Network interface check failed: {e}")
     
@@ -1902,6 +1904,7 @@ class MirrorApp:
             self.update_status(f"WebSocket error: {str(e)}")
 
     async def _send_frames(self, websocket):
+        last_ver = None  # only push a screen frame when the content changed
         while True:
             if self.mode_var.get() == "terminal":
                 if self.latest_text is not None:
@@ -1911,13 +1914,15 @@ class MirrorApp:
                         "fontSize": self.fontsize_var.get()
                     }))
             else:
-                if self.latest_image:
-                    await websocket.send(json.dumps({
-                        "type": "screen",
-                        "image": self.latest_image,
-                        "format": self.latest_format,
-                        "rotation": self.rotation_var.get()
-                    }))
+                # Screen mode: send the raw image bytes as a BINARY frame (no
+                # base64 = ~33% less data + native browser decode). Rotation is
+                # already baked into the frame, so no metadata is needed. Skip
+                # unchanged frames so bandwidth goes to real motion, not repaints.
+                raw = self.latest_image_raw
+                ver = getattr(self, "frame_version", 0)
+                if raw and ver != last_ver:
+                    await websocket.send(raw)
+                    last_ver = ver
             await asyncio.sleep(1 / self.fps_var.get())
 
     async def _recv_input(self, websocket):
@@ -2126,7 +2131,7 @@ class MirrorApp:
         return img, (0, 0, img.width, img.height), None, (0, 0)
 
     def _process_and_encode(self, img):
-        """Apply rotation/scale/e-ink and encode -> (b64, format, (w,h))."""
+        """Apply rotation/scale/e-ink and encode -> (b64, format, (w,h), raw_bytes)."""
         rot = self.rotation_var.get()
         if rot:
             img = img.rotate(-rot, expand=True)
@@ -2146,25 +2151,27 @@ class MirrorApp:
         else:
             img.save(buf, "JPEG", quality=self.quality_var.get())
             fmt = "jpeg"
-        return base64.b64encode(buf.getvalue()).decode("utf-8"), fmt, size
+        raw = buf.getvalue()
+        return base64.b64encode(raw).decode("utf-8"), fmt, size, raw
 
     def _store_source(self, key, is_default=False):
         """Capture a source, encode it, store in self.frames[key] (versioned)."""
         img, region, android, asize = self._grab_source(key)
         if img is None:
             return
-        b64, fmt, size = self._process_and_encode(img)
+        b64, fmt, size, raw = self._process_and_encode(img)
         sig = hash(b64)
         prev = self.frames.get(key)
         ver = prev["version"] if prev else 0
         if sig != self._frame_sigs.get(key):
             ver += 1
             self._frame_sigs[key] = sig
-        self.frames[key] = {"image": b64, "format": fmt, "size": size, "region": region,
-                            "rot": self.rotation_var.get(), "android": android,
-                            "android_size": asize, "version": ver}
+        self.frames[key] = {"image": b64, "raw": raw, "format": fmt, "size": size,
+                            "region": region, "rot": self.rotation_var.get(),
+                            "android": android, "android_size": asize, "version": ver}
         if is_default:
             self.latest_image = b64
+            self.latest_image_raw = raw
             self.latest_format = fmt
             self.latest_size = size
             self.capture_region = region
@@ -2239,6 +2246,14 @@ class MirrorApp:
             self.update_status(f"✗ Test error: {e}")
     
 if __name__ == "__main__":
+    # Never let a console that can't encode a character (e.g. Windows cp1252 and
+    # our ✓/emoji output) crash the app on a print(). Reconfigure to UTF-8 with
+    # replacement; guard because a windowed/frozen build may have no stdout.
+    for _stream in (sys.stdout, sys.stderr):
+        try:
+            _stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
     root = tk.Tk()
     app = MirrorApp(root)
     root.mainloop()
